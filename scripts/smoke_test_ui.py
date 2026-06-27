@@ -9,6 +9,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from main import build_application  # noqa: E402
+from views.administrative_view import RecordDialog  # noqa: E402
+from views.clients_view import ClientForm  # noqa: E402
+from views.reports_view import LastTwelveMonthsDialog  # noqa: E402
 
 
 def main() -> None:
@@ -40,6 +43,34 @@ def main() -> None:
             application.show_view(route)
             application.update_idletasks()
             print(f"OK: {route}", flush=True)
+            if route == "clientes":
+                dialog = ClientForm(
+                    application.current_view, application, None, lambda: None
+                )
+                dialog.update_idletasks()
+                dialog.destroy()
+                print("OK: formulario de cliente", flush=True)
+            elif route in ("tareas", "honorarios"):
+                dialog = RecordDialog(
+                    application.current_view,
+                    application,
+                    route,
+                    lambda: None,
+                )
+                dialog.update_idletasks()
+                dialog.destroy()
+                print(f"OK: formulario de {route}", flush=True)
+            elif route == "reportes":
+                clients = application.client_service.list_clients()
+                if clients:
+                    dialog = LastTwelveMonthsDialog(
+                        application.current_view,
+                        application,
+                        int(clients[0]["id"]),
+                    )
+                    dialog.update_idletasks()
+                    dialog.destroy()
+                    print("OK: vista de últimos 12 meses", flush=True)
         application.destroy()
 
 

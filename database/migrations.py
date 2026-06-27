@@ -15,6 +15,7 @@ CLIENT_COLUMNS = {
 
 MONO_COLUMNS = {
     "actividad_fiscal": "TEXT DEFAULT ''",
+    "codigo_actividad": "TEXT DEFAULT ''",
     "denominacion": "TEXT DEFAULT ''",
     "fecha_baja_monotributo": "TEXT",
 }
@@ -108,6 +109,18 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             observaciones TEXT DEFAULT '',
             FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS configuracion_alertas_cliente (
+            cliente_id INTEGER NOT NULL,
+            clave TEXT NOT NULL,
+            valor TEXT NOT NULL,
+            actualizado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(cliente_id, clave),
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_config_alertas_cliente
+            ON configuracion_alertas_cliente(cliente_id);
         """
     )
     _add_columns(

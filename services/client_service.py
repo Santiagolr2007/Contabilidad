@@ -67,6 +67,13 @@ class ClientService:
         if client.tipo_persona not in ("persona_humana", "sociedad"):
             raise ValueError("El tipo de persona seleccionado no es válido.")
 
+        if (
+            monotributo
+            and monotributo.codigo_actividad
+            and not monotributo.codigo_actividad.strip().isdigit()
+        ):
+            raise ValueError("El código de actividad debe contener solamente números.")
+
         try:
             with self.database.connection() as connection:
                 if client.id:
@@ -181,13 +188,14 @@ class ClientService:
                         """
                         INSERT INTO monotributo_cliente(
                             cliente_id, categoria_actual, actividad, actividad_fiscal,
-                            denominacion, fecha_alta, fecha_baja_monotributo,
+                            codigo_actividad, denominacion, fecha_alta, fecha_baja_monotributo,
                             estado, observaciones_fiscales
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(cliente_id) DO UPDATE SET
                             categoria_actual = excluded.categoria_actual,
                             actividad = excluded.actividad,
                             actividad_fiscal = excluded.actividad_fiscal,
+                            codigo_actividad = excluded.codigo_actividad,
                             denominacion = excluded.denominacion,
                             fecha_alta = excluded.fecha_alta,
                             fecha_baja_monotributo = excluded.fecha_baja_monotributo,
@@ -199,6 +207,7 @@ class ClientService:
                             monotributo.categoria_actual,
                             monotributo.actividad_fiscal.strip(),
                             monotributo.actividad_fiscal.strip(),
+                            monotributo.codigo_actividad.strip(),
                             monotributo.denominacion.strip(),
                             monotributo.fecha_alta or None,
                             monotributo.fecha_baja or None,

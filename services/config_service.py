@@ -4,6 +4,15 @@ from database import Database
 
 
 class ConfigService:
+    CLIENT_ALERT_KEYS = (
+        "monotributo_alerta_porcentaje",
+        "monto_comprobante_significativo",
+        "concentracion_porcentaje",
+        "compras_ventas_alerta",
+        "muchas_facturas_dia",
+        "muchas_facturas_cliente",
+    )
+
     def __init__(self, database: Database) -> None:
         self.database = database
 
@@ -18,6 +27,71 @@ class ConfigService:
             return float(self.get(key, str(default)))
         except ValueError:
             return default
+
+    def get_client_float(
+        self, client_id: int, key: str, default: float = 0.0
+    ) -> float:
+        row = self.database.query_one(
+            """
+            SELECT valor FROM configuracion_alertas_cliente
+            WHERE cliente_id = ? AND clave = ?
+            """,
+            (client_id, key),
+        )
+        if row:
+            try:
+                return float(row["valor"])
+            except (TypeError, ValueError):
+                pass
+        return self.get_float(key, default)
+
+    def get_client_alerts(self, client_id: int) -> dict[str, float]:
+        defaults = {
+            "monotributo_alerta_porcentaje": 0.80,
+            "monto_comprobante_significativo": 500_000,
+            "concentracion_porcentaje": 0.30,
+            "compras_ventas_alerta": 0.80,
+            "muchas_facturas_dia": 10,
+            "muchas_facturas_cliente": 10,
+        }
+        return {
+            key: self.get_client_float(client_id, key, defaults[key])
+            for key in self.CLIENT_ALERT_KEYS
+        }
+
+    def save_client_alerts(self, client_id: int, values: dict[str, float]) -> None:
+        unknown = set(values) - set(self.CLIENT_ALERT_KEYS)
+        if unknown:
+            raise ValueError("La configuración de alertas contiene opciones desconocidas.")
+        percentages = {
+            "monotributo_alerta_porcentaje",
+            "concentracion_porcentaje",
+            "compras_ventas_alerta",
+        }
+        counts = {"muchas_facturas_dia", "muchas_facturas_cliente"}
+        normalized: list[tuple[int, str, str]] = []
+        for key in self.CLIENT_ALERT_KEYS:
+            if key not in values:
+                continue
+            value = float(values[key])
+            if value < 0:
+                raise ValueError("Los valores de alerta no pueden ser negativos.")
+            if key in percentages and value > 1:
+                raise ValueError("Los porcentajes de alerta deben estar entre 0 y 100 %.")
+            if key in counts and (value < 1 or not value.is_integer()):
+                raise ValueError("Las cantidades de comprobantes deben ser números enteros positivos.")
+            normalized.append((client_id, key, str(value)))
+        with self.database.connection() as connection:
+            connection.executemany(
+                """
+                INSERT INTO configuracion_alertas_cliente(cliente_id, clave, valor)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cliente_id, clave) DO UPDATE SET
+                    valor = excluded.valor,
+                    actualizado_en = CURRENT_TIMESTAMP
+                """,
+                normalized,
+            )
 
     def list_all(self) -> list[dict]:
         return [

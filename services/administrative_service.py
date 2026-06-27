@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from database import Database
+from utils.validators import positive_number, required
 
 
 class AdministrativeService:
@@ -14,8 +15,14 @@ class AdministrativeService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    def _table(self, module: str) -> str:
+        try:
+            return self.TABLES[module]
+        except KeyError as error:
+            raise ValueError("El módulo administrativo no existe.") from error
+
     def list(self, module: str) -> list[dict]:
-        table = self.TABLES[module]
+        table = self._table(module)
         date_order = {
             "documentacion": "d.id DESC",
             "tareas": "d.fecha_vencimiento, d.id DESC",
@@ -33,43 +40,130 @@ class AdministrativeService:
             )
         ]
 
+    def get(self, module: str, record_id: int) -> dict | None:
+        table = self._table(module)
+        row = self.database.query_one(
+            f"SELECT * FROM {table} WHERE id = ?", (record_id,)
+        )
+        return dict(row) if row else None
+
     def create(self, module: str, data: dict) -> int:
+        return self._save(module, data)
+
+    def update(self, module: str, record_id: int, data: dict) -> None:
+        if not self.get(module, record_id):
+            raise ValueError("El registro seleccionado ya no existe.")
+        self._save(module, data, record_id)
+
+    def _save(self, module: str, data: dict, record_id: int | None = None) -> int:
+        self._table(module)
         if module == "documentacion":
-            return self.database.execute(
-                """INSERT INTO documentacion(cliente_id, periodo, tipo_documento, estado,
-                       fecha_solicitud, fecha_recepcion, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (data["cliente_id"], data["periodo"], data["tipo_documento"], data["estado"],
-                 data.get("fecha_solicitud") or None, data.get("fecha_recepcion") or None,
-                 data.get("observaciones", "")),
+            values = (
+                data["cliente_id"], data["periodo"],
+                required(data["tipo_documento"], "Documento"), data["estado"],
+                data.get("fecha_solicitud") or None,
+                data.get("fecha_recepcion") or None,
+                data.get("observaciones", ""),
             )
+            if record_id:
+                self.database.execute(
+                    """UPDATE documentacion SET cliente_id=?, periodo=?,
+                       tipo_documento=?, estado=?, fecha_solicitud=?,
+                       fecha_recepcion=?, observaciones=? WHERE id=?""",
+                    (*values, record_id),
+                )
+                return record_id
+            return self.database.execute(
+                """INSERT INTO documentacion(cliente_id, periodo, tipo_documento,
+                   estado, fecha_solicitud, fecha_recepcion, observaciones)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                values,
+            )
+
         if module == "tareas":
+            values = (
+                data.get("cliente_id"), required(data["modulo"], "Módulo"),
+                data["periodo"], required(data["titulo"], "Título"),
+                data.get("descripcion", ""), data.get("responsable", ""),
+                data.get("fecha_inicio") or None,
+                data.get("fecha_vencimiento") or None,
+                data.get("fecha_finalizacion") or None,
+                data["estado"], data["prioridad"], data.get("observaciones", ""),
+            )
+            if record_id:
+                self.database.execute(
+                    """UPDATE tareas SET cliente_id=?, modulo=?, periodo=?, titulo=?,
+                       descripcion=?, responsable=?, fecha_inicio=?, fecha_vencimiento=?,
+                       fecha_finalizacion=?, estado=?, prioridad=?, observaciones=?
+                       WHERE id=?""",
+                    (*values, record_id),
+                )
+                return record_id
             return self.database.execute(
                 """INSERT INTO tareas(cliente_id, modulo, periodo, titulo, descripcion,
-                       responsable, fecha_inicio, fecha_vencimiento, fecha_finalizacion,
-                       estado, prioridad, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (data.get("cliente_id"), data["modulo"], data["periodo"], data["titulo"],
-                 data.get("descripcion", ""), data.get("responsable", ""),
-                 data.get("fecha_inicio") or None, data.get("fecha_vencimiento") or None,
-                 data.get("fecha_finalizacion") or None, data["estado"], data["prioridad"],
-                 data.get("observaciones", "")),
+                   responsable, fecha_inicio, fecha_vencimiento, fecha_finalizacion,
+                   estado, prioridad, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                values,
             )
+
         if module == "vencimientos":
-            return self.database.execute(
-                """INSERT INTO vencimientos(cliente_id, impuesto, periodo, fecha_vencimiento,
-                       estado, observaciones) VALUES (?, ?, ?, ?, ?, ?)""",
-                (data.get("cliente_id"), data["impuesto"], data["periodo"],
-                 data["fecha_vencimiento"], data["estado"], data.get("observaciones", "")),
+            values = (
+                data.get("cliente_id"), required(data["impuesto"], "Impuesto"),
+                data["periodo"], required(data["fecha_vencimiento"], "Fecha de vencimiento"),
+                data["estado"], data.get("observaciones", ""),
             )
+            if record_id:
+                self.database.execute(
+                    """UPDATE vencimientos SET cliente_id=?, impuesto=?, periodo=?,
+                       fecha_vencimiento=?, estado=?, observaciones=? WHERE id=?""",
+                    (*values, record_id),
+                )
+                return record_id
+            return self.database.execute(
+                """INSERT INTO vencimientos(cliente_id, impuesto, periodo,
+                   fecha_vencimiento, estado, observaciones) VALUES (?, ?, ?, ?, ?, ?)""",
+                values,
+            )
+
+        amount = positive_number(data["importe"], "Importe")
+        pending = positive_number(
+            data.get("saldo_pendiente") or amount,
+            "Saldo pendiente",
+            allow_zero=True,
+        )
+        if pending > amount:
+            raise ValueError("El saldo pendiente no puede superar el importe total.")
+        values = (
+            data["cliente_id"], required(data["servicio"], "Servicio"),
+            data["periodo"], amount, data["estado"],
+            data.get("fecha_emision") or None, data.get("fecha_cobro") or None,
+            data.get("medio_pago", ""), pending, data.get("observaciones", ""),
+        )
+        if record_id:
+            self.database.execute(
+                """UPDATE honorarios SET cliente_id=?, servicio=?, periodo=?, importe=?,
+                   estado=?, fecha_emision=?, fecha_cobro=?, medio_pago=?,
+                   saldo_pendiente=?, observaciones=? WHERE id=?""",
+                (*values, record_id),
+            )
+            return record_id
         return self.database.execute(
             """INSERT INTO honorarios(cliente_id, servicio, periodo, importe, estado,
-                   fecha_emision, fecha_cobro, medio_pago, saldo_pendiente, observaciones)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (data["cliente_id"], data["servicio"], data["periodo"], float(data["importe"]),
-             data["estado"], data.get("fecha_emision") or None, data.get("fecha_cobro") or None,
-             data.get("medio_pago", ""), float(data.get("saldo_pendiente") or data["importe"]),
-             data.get("observaciones", "")),
+               fecha_emision, fecha_cobro, medio_pago, saldo_pendiente, observaciones)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            values,
         )
 
+    def delete(self, module: str, record_id: int) -> int:
+        table = self._table(module)
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                f"DELETE FROM {table} WHERE id = ?", (record_id,)
+            )
+            return int(cursor.rowcount)
+
     def update_status(self, module: str, record_id: int, status: str) -> None:
-        table = self.TABLES[module]
-        self.database.execute(f"UPDATE {table} SET estado = ? WHERE id = ?", (status, record_id))
+        table = self._table(module)
+        self.database.execute(
+            f"UPDATE {table} SET estado = ? WHERE id = ?", (status, record_id)
+        )

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import date
 from tkinter import messagebox, ttk
 
 from utils.formatters import money, percentage
+from utils.validators import positive_number
 
 from .common import MetricCard, ScrollableFrame, fit_window, make_tree_sortable
 from .theme import COLORS
@@ -72,6 +74,7 @@ class MonotributoView(ttk.Frame):
         self.details.add(VouchersPanel(self.details,self.app,"compras",client_id),text="Compras")
         self._add_activity_tab(data)
         self._add_iibb_tab(client_id)
+        self._add_iibb_monthly_tab(client_id)
         self._add_recat_tab(client_id)
         self._add_ranking_tab("Clientes", data["sales_ranking"])
         self._add_ranking_tab("Proveedores", data["purchases_ranking"])
@@ -117,6 +120,131 @@ class MonotributoView(ttk.Frame):
             except Exception as error: messagebox.showerror("No se pudo calcular",str(error))
         ttk.Button(frame,text="Guardar y calcular",style="Primary.TButton",command=calculate).grid(row=offset,column=3,sticky="e",pady=10)
         ttk.Button(frame,text="Agregar jurisdicción Convenio Multilateral",command=lambda:ConvenioDialog(frame,self.app,client_id,period.get())).grid(row=offset+1,column=3,sticky="e",pady=4); frame.columnconfigure(1,weight=1); frame.columnconfigure(3,weight=1)
+
+    def _add_iibb_monthly_tab(self, client_id: int) -> None:
+        frame = ttk.Frame(self.details, padding=10)
+        self.details.add(frame, text="Ingresos Brutos mensuales")
+        controls = ttk.Frame(frame)
+        controls.pack(fill="x", pady=(0, 8))
+        period = tk.StringVar(value=date.today().strftime("%Y-%m"))
+        retentions = tk.StringVar(value="0")
+        fixed_amount = tk.StringVar(value="0")
+        ttk.Label(controls, text="Período").pack(side="left")
+        ttk.Entry(controls, textvariable=period, width=10).pack(side="left", padx=(6, 14))
+        ttk.Label(controls, text="Retenciones").pack(side="left")
+        ttk.Entry(controls, textvariable=retentions, width=13).pack(side="left", padx=(6, 14))
+        ttk.Label(controls, text="Importe simplificado").pack(side="left")
+        ttk.Entry(controls, textvariable=fixed_amount, width=13).pack(side="left", padx=(6, 14))
+
+        summary = ttk.Frame(frame)
+        summary.pack(fill="x", pady=(0, 8))
+        summary_vars = {
+            "base": tk.StringVar(value=money(0)),
+            "rate": tk.StringVar(value="3.5%"),
+            "determined": tk.StringVar(value=money(0)),
+            "retentions": tk.StringVar(value=money(0)),
+            "payable": tk.StringVar(value=money(0)),
+        }
+        for column, (label, key) in enumerate(
+            (
+                ("Ventas netas", "base"),
+                ("Alícuota", "rate"),
+                ("IIBB determinado", "determined"),
+                ("Retenciones", "retentions"),
+                ("Importe por pagar", "payable"),
+            )
+        ):
+            box = ttk.LabelFrame(summary, text=label, padding=8)
+            box.grid(row=0, column=column, sticky="nsew", padx=4)
+            ttk.Label(box, textvariable=summary_vars[key]).pack()
+            summary.columnconfigure(column, weight=1)
+
+        table = ttk.Frame(frame)
+        table.pack(fill="both", expand=True)
+        columns = (
+            "fecha", "tipo", "pv", "numero", "contraparte", "documento",
+            "importe", "alicuota", "impuesto",
+        )
+        tree = ttk.Treeview(table, columns=columns, show="headings")
+        settings = (
+            ("fecha", "Fecha", 90),
+            ("tipo", "Comprobante", 140),
+            ("pv", "Punto venta", 80),
+            ("numero", "Número", 90),
+            ("contraparte", "Cliente", 190),
+            ("documento", "CUIT / DNI", 110),
+            ("importe", "Importe venta", 120),
+            ("alicuota", "Alícuota IIBB", 95),
+            ("impuesto", "Impuesto", 120),
+        )
+        for column, title, width in settings:
+            tree.heading(column, text=title)
+            tree.column(column, width=width)
+        yscroll = ttk.Scrollbar(table, orient="vertical", command=tree.yview)
+        xscroll = ttk.Scrollbar(table, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        table.rowconfigure(0, weight=1)
+        table.columnconfigure(0, weight=1)
+        make_tree_sortable(tree, {"importe", "alicuota", "impuesto"})
+
+        def load_period() -> None:
+            try:
+                detail = self.app.iibb_service.monthly_detail(client_id, period.get())
+                for item in tree.get_children():
+                    tree.delete(item)
+                for row in detail["rows"]:
+                    tree.insert(
+                        "",
+                        "end",
+                        values=(
+                            row["fecha"], row["tipo_comprobante"], row["punto_venta"],
+                            row["numero_comprobante"], row["contraparte_nombre"],
+                            row["contraparte_documento"], money(row["importe_venta"]),
+                            percentage(row["alicuota"]), money(row["impuesto_calculado"]),
+                        ),
+                    )
+                retentions.set(str(detail["retentions"]))
+                fixed_amount.set(str(detail["fixed_amount"]))
+                summary_vars["base"].set(money(detail["base"]))
+                summary_vars["rate"].set(percentage(detail["rate"]))
+                summary_vars["determined"].set(money(detail["determined"]))
+                summary_vars["retentions"].set(money(detail["retentions"]))
+                summary_vars["payable"].set(money(detail["payable"]))
+            except Exception as error:
+                messagebox.showerror("No se pudo consultar IIBB", str(error))
+
+        def save_calculation() -> None:
+            try:
+                result = self.app.iibb_service.calculate_and_save(
+                    client_id,
+                    period.get(),
+                    retentions=positive_number(
+                        retentions.get(), "Retenciones", allow_zero=True
+                    ),
+                    fixed_amount=positive_number(
+                        fixed_amount.get(), "Importe simplificado", allow_zero=True
+                    ),
+                )
+                load_period()
+                messagebox.showinfo(
+                    "Ingresos Brutos",
+                    f"Impuesto determinado: {money(result['determined'])}\n"
+                    f"Importe por pagar: {money(result['payable'])}",
+                )
+            except Exception as error:
+                messagebox.showerror("No se pudo calcular", str(error))
+
+        ttk.Button(controls, text="Consultar", command=load_period).pack(side="left")
+        ttk.Button(
+            controls,
+            text="Guardar y calcular",
+            style="Primary.TButton",
+            command=save_calculation,
+        ).pack(side="right")
+        load_period()
 
     def _add_recat_tab(self, client_id: int) -> None:
         scroll=ScrollableFrame(self.details,padding=14);self.details.add(scroll,text="Recateg.");frame=scroll.content

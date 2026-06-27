@@ -159,7 +159,9 @@ class VoucherService:
         return text, 1
 
     def _create_alerts(self, connection, kind: str, voucher: Voucher, amount: float) -> None:
-        threshold = self.config.get_float("monto_comprobante_significativo", 500_000)
+        threshold = self.config.get_client_float(
+            voucher.cliente_id, "monto_comprobante_significativo", 500_000
+        )
         period = voucher.periodo_fiscal
         label = "venta" if kind == "ventas" else "compra"
         if voucher.moneda != "ARS":
@@ -317,7 +319,9 @@ class VoucherService:
 
     def noteworthy(self, kind: str, client_id: int, foreign_only: bool = False) -> list[dict]:
         table = self._table(kind)
-        threshold = self.config.get_float("monto_comprobante_significativo", 500_000)
+        threshold = self.config.get_client_float(
+            client_id, "monto_comprobante_significativo", 500_000
+        )
         condition = "moneda <> 'ARS'" if foreign_only else "(ABS(importe_pesos) >= ? OR moneda <> 'ARS')"
         params = (client_id,) if foreign_only else (client_id, threshold)
         rows = self.database.query(
@@ -335,7 +339,9 @@ class VoucherService:
         return [dict(row) for row in rows]
 
     def significant_counts(self, client_id: int) -> dict:
-        threshold = self.config.get_float("monto_comprobante_significativo", 500_000)
+        threshold = self.config.get_client_float(
+            client_id, "monto_comprobante_significativo", 500_000
+        )
         sales = self.database.query_one(
             """
             SELECT

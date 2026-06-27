@@ -38,6 +38,7 @@ class FiscalProfile:
 class MonotributoProfile:
     categoria_actual: str = ""
     actividad_fiscal: str = ""
+    codigo_actividad: str = ""
     denominacion: str = ""
     fecha_alta: str = ""
     fecha_baja: str = ""

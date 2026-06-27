@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from database import Database
+from utils.formatters import normalize_period
 
 from .config_service import ConfigService
 
@@ -84,6 +85,13 @@ class IibbService:
         payment_status: str = "pendiente",
         due_date: str = "",
     ) -> dict:
+        period = normalize_period(period)
+        retentions = float(retentions)
+        perceptions = float(perceptions)
+        prior_balance = float(prior_balance)
+        fixed_amount = float(fixed_amount)
+        if min(retentions, perceptions, prior_balance, fixed_amount) < 0:
+            raise ValueError("Retenciones, percepciones, saldos e importe fijo no pueden ser negativos.")
         profile = self.get_profile(client_id)
         row = self.database.query_one(
             """
@@ -94,8 +102,11 @@ class IibbService:
         )
         base = max(float(row["base"] or 0), 0)
         simplified = "simp" in profile["regimen_principal"].casefold()
-        determined = fixed_amount if simplified and fixed_amount else base * float(profile["alicuota"])
-        payable = max(determined - retentions - perceptions - prior_balance, 0)
+        determined = round(
+            fixed_amount if simplified and fixed_amount else base * float(profile["alicuota"]),
+            2,
+        )
+        payable = max(round(determined - retentions - perceptions - prior_balance, 2), 0)
         self.database.execute(
             """
             INSERT INTO iibb_monotributo(
@@ -128,7 +139,95 @@ class IibbService:
             "determined": determined,
             "payable": payable,
             "regime": profile["regimen_principal"],
+            "retentions": retentions,
+            "fixed_amount": fixed_amount,
         }
+
+    def monthly_detail(self, client_id: int, period: str) -> dict:
+        """Detalle de ventas e IIBB calculado para un cliente y período."""
+        period = normalize_period(period)
+        profile = self.get_profile(client_id)
+        rate = float(profile.get("alicuota") or 0)
+        rows = [
+            dict(row)
+            for row in self.database.query(
+                """
+                SELECT id, fecha, tipo_comprobante, punto_venta,
+                       numero_comprobante, contraparte_nombre,
+                       contraparte_documento, importe_neto_fiscal AS importe_venta
+                FROM comprobantes_ventas
+                WHERE cliente_id = ? AND periodo_fiscal = ?
+                ORDER BY fecha, punto_venta, numero_comprobante, id
+                """,
+                (client_id, period),
+            )
+        ]
+        for row in rows:
+            row["alicuota"] = rate
+            row["impuesto_calculado"] = round(
+                float(row["importe_venta"] or 0) * rate, 2
+            )
+        base = max(sum(float(row["importe_venta"] or 0) for row in rows), 0)
+        stored = self.database.query_one(
+            "SELECT * FROM iibb_monotributo WHERE cliente_id = ? AND periodo = ?",
+            (client_id, period),
+        )
+        record = dict(stored) if stored else {}
+        retentions = float(record.get("retenciones") or 0)
+        fixed_amount = float(record.get("importe_fijo") or 0)
+        simplified = "simp" in str(profile.get("regimen_principal", "")).casefold()
+        determined = fixed_amount if simplified and fixed_amount else round(base * rate, 2)
+        payable = max(round(determined - retentions, 2), 0)
+        return {
+            "client_id": client_id,
+            "period": period,
+            "profile": profile,
+            "rows": rows,
+            "base": round(base, 2),
+            "rate": rate,
+            "determined": determined,
+            "retentions": retentions,
+            "fixed_amount": fixed_amount,
+            "payable": payable,
+        }
+
+    def save_fixed_amount(self, client_id: int, period: str, amount: float) -> None:
+        period = normalize_period(period)
+        amount = float(amount)
+        if amount < 0:
+            raise ValueError("El importe mensual simplificado no puede ser negativo.")
+        detail = self.monthly_detail(client_id, period)
+        self.database.execute(
+            """
+            INSERT INTO iibb_monotributo(
+                cliente_id, periodo, regimen_principal, base_imponible, alicuota,
+                impuesto_determinado, importe_fijo, saldo_pagar
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cliente_id, periodo) DO UPDATE SET
+                regimen_principal = excluded.regimen_principal,
+                base_imponible = excluded.base_imponible,
+                alicuota = excluded.alicuota,
+                impuesto_determinado = excluded.impuesto_determinado,
+                importe_fijo = excluded.importe_fijo,
+                saldo_pagar = MAX(
+                    excluded.impuesto_determinado
+                    - iibb_monotributo.retenciones
+                    - iibb_monotributo.percepciones
+                    - iibb_monotributo.saldo_favor_anterior,
+                    0
+                )
+            """,
+            (
+                client_id,
+                period,
+                detail["profile"]["regimen_principal"],
+                detail["base"],
+                detail["rate"],
+                amount if amount > 0 else detail["base"] * detail["rate"],
+                amount,
+                max((amount if amount > 0 else detail["base"] * detail["rate"]), 0),
+            ),
+        )
 
     def list_monthly(self, client_id: int) -> list[dict]:
         return [

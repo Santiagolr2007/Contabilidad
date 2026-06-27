@@ -12,6 +12,7 @@ from database import Database, initialize_database
 from database.seed import seed_reference_data
 from models import Client, FiscalProfile, MonotributoProfile, Voucher
 from services import (
+    AdministrativeService,
     ClientService,
     AlertService,
     ConfigService,
@@ -65,6 +66,7 @@ class StageOneTests(unittest.TestCase):
             "vencimientos",
             "honorarios",
             "configuracion",
+            "configuracion_alertas_cliente",
         }
         self.assertTrue(expected.issubset(names))
 
@@ -253,6 +255,203 @@ class StageOneTests(unittest.TestCase):
             self.assertEqual(sheet.freeze_panes, "A2")
             self.assertGreaterEqual(sheet.max_row, 2)
             workbook.close()
+
+    def test_last_twelve_months_totals_zero_division_and_excel(self) -> None:
+        iibb = IibbService(self.database, self.config)
+        iibb.save_profile(
+            self.client_id,
+            {"regimen_principal": "Régimen general/local", "alicuota": 0.035},
+        )
+        self.vouchers.create(
+            "ventas",
+            Voucher(
+                cliente_id=self.client_id,
+                fecha="2026-06-10",
+                periodo_fiscal="2026-06",
+                tipo_comprobante="Factura C",
+                punto_venta="4",
+                numero_comprobante="1",
+                contraparte_nombre="Cliente junio",
+                importe_original=1000,
+            ),
+        )
+        self.vouchers.create(
+            "compras",
+            Voucher(
+                cliente_id=self.client_id,
+                fecha="2026-06-11",
+                periodo_fiscal="2026-06",
+                tipo_comprobante="Factura A",
+                punto_venta="4",
+                numero_comprobante="2",
+                contraparte_nombre="Proveedor junio",
+                importe_original=250,
+            ),
+        )
+        self.vouchers.create(
+            "compras",
+            Voucher(
+                cliente_id=self.client_id,
+                fecha="2026-05-11",
+                periodo_fiscal="2026-05",
+                tipo_comprobante="Factura A",
+                punto_venta="4",
+                numero_comprobante="3",
+                contraparte_nombre="Proveedor mayo",
+                importe_original=100,
+            ),
+        )
+        iibb.save_fixed_amount(self.client_id, "2026-06", 50)
+        reports = ReportService(self.vouchers)
+        report = reports.last_twelve_months(
+            self.client_id, reference=date(2026, 6, 27)
+        )
+        self.assertEqual(len(report["rows"]), 12)
+        self.assertEqual(report["rows"][0]["periodo"], "2025-07")
+        self.assertEqual(report["rows"][-1]["periodo"], "2026-06")
+        may = next(row for row in report["rows"] if row["periodo"] == "2026-05")
+        self.assertEqual(may["porcentaje_compras"], 0)
+        self.assertEqual(report["totals"]["ventas"], 1000)
+        self.assertEqual(report["totals"]["compras"], 350)
+        self.assertEqual(report["totals"]["resultado"], 650)
+        self.assertAlmostEqual(report["totals"]["porcentaje_compras"], 0.35)
+        self.assertEqual(report["totals"]["ingresos_brutos"], 35)
+        self.assertEqual(report["totals"]["regimen_simplificado"], 50)
+
+        output = self.path / "ultimos_12.xlsx"
+        reports.export_last_twelve_months(
+            output, self.client_id, reference=date(2026, 6, 27)
+        )
+        workbook = load_workbook(output)
+        sheet = workbook["Últimos 12 meses"]
+        self.assertEqual(sheet.max_row, 14)
+        self.assertEqual(sheet["A14"].value, "TOTAL")
+        self.assertEqual(sheet["B14"].value, 1000)
+        self.assertEqual(sheet["E14"].value, 0.35)
+        self.assertEqual(sheet["E14"].number_format, "0.0%")
+        workbook.close()
+
+    def test_activity_code_and_client_alert_configuration(self) -> None:
+        configured_id = self.clients.save(
+            Client("Actividad configurada", "20333444559"),
+            FiscalProfile(regimen_principal="monotributista"),
+            MonotributoProfile(
+                categoria_actual="B",
+                actividad_fiscal="Servicios",
+                codigo_actividad="620100",
+            ),
+        )
+        bundle = self.clients.get_bundle(configured_id)
+        self.assertEqual(bundle["monotributo"]["codigo_actividad"], "620100")
+        with self.assertRaisesRegex(ValueError, "solamente números"):
+            self.clients.save(
+                Client("Actividad inválida", "20444555661"),
+                FiscalProfile(regimen_principal="monotributista"),
+                MonotributoProfile(codigo_actividad="ABC-1"),
+            )
+
+        self.config.save_client_alerts(
+            configured_id,
+            {
+                "monto_comprobante_significativo": 2_000_000,
+                "monotributo_alerta_porcentaje": 0.75,
+            },
+        )
+        self.assertEqual(
+            self.config.get_client_float(
+                configured_id, "monto_comprobante_significativo"
+            ),
+            2_000_000,
+        )
+        self.vouchers.create(
+            "ventas",
+            Voucher(
+                cliente_id=configured_id,
+                fecha="2026-06-12",
+                periodo_fiscal="2026-06",
+                tipo_comprobante="Factura C",
+                punto_venta="5",
+                numero_comprobante="1",
+                contraparte_nombre="Sin alerta elevada",
+                importe_original=1_000_000,
+            ),
+        )
+        count = self.database.query_one(
+            """SELECT COUNT(*) n FROM alertas_fiscales
+               WHERE cliente_id=? AND tipo_alerta='venta_significativa'""",
+            (configured_id,),
+        )
+        self.assertEqual(count["n"], 0)
+
+    def test_iibb_monthly_detail_and_payable(self) -> None:
+        iibb = IibbService(self.database, self.config)
+        iibb.save_profile(
+            self.client_id,
+            {"regimen_principal": "Régimen general/local", "alicuota": 0.035},
+        )
+        for number, voucher_type, amount in (
+            ("31", "Factura C", 1000),
+            ("32", "Nota de Crédito C", 200),
+        ):
+            self.vouchers.create(
+                "ventas",
+                Voucher(
+                    cliente_id=self.client_id,
+                    fecha="2026-06-15",
+                    periodo_fiscal="2026-06",
+                    tipo_comprobante=voucher_type,
+                    punto_venta="6",
+                    numero_comprobante=number,
+                    contraparte_nombre="Cliente IIBB",
+                    importe_original=amount,
+                ),
+            )
+        result = iibb.calculate_and_save(
+            self.client_id, "2026-06", retentions=10
+        )
+        detail = iibb.monthly_detail(self.client_id, "2026-06")
+        self.assertEqual(len(detail["rows"]), 2)
+        self.assertEqual(detail["base"], 800)
+        self.assertEqual(result["determined"], 28)
+        self.assertEqual(detail["retentions"], 10)
+        self.assertEqual(detail["payable"], 18)
+
+    def test_tasks_and_fees_can_be_updated_and_deleted(self) -> None:
+        service = AdministrativeService(self.database)
+        task_id = service.create(
+            "tareas",
+            {
+                "cliente_id": self.client_id,
+                "modulo": "Monotributo",
+                "periodo": "2026-06",
+                "titulo": "Presentar DDJJ",
+                "estado": "pendiente",
+                "prioridad": "media",
+            },
+        )
+        task = service.get("tareas", task_id)
+        task.update({"titulo": "Presentar DDJJ corregida", "prioridad": "alta"})
+        service.update("tareas", task_id, task)
+        self.assertEqual(service.get("tareas", task_id)["prioridad"], "alta")
+        self.assertEqual(service.delete("tareas", task_id), 1)
+        self.assertIsNone(service.get("tareas", task_id))
+
+        fee_id = service.create(
+            "honorarios",
+            {
+                "cliente_id": self.client_id,
+                "servicio": "Liquidación mensual",
+                "periodo": "2026-06",
+                "importe": "10000",
+                "estado": "pendiente de facturar",
+                "saldo_pendiente": "10000",
+            },
+        )
+        fee = service.get("honorarios", fee_id)
+        fee.update({"importe": "12000", "saldo_pendiente": "5000"})
+        service.update("honorarios", fee_id, fee)
+        self.assertEqual(service.get("honorarios", fee_id)["importe"], 12000)
+        self.assertEqual(service.delete("honorarios", fee_id), 1)
 
     def test_arca_csv_import_and_iibb(self) -> None:
         source = self.path / "emitidos.csv"

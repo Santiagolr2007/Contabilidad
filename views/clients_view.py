@@ -5,6 +5,7 @@ from tkinter import messagebox, ttk
 
 from models import Client, FiscalProfile, MonotributoProfile
 from utils.formatters import normalize_date
+from utils.validators import positive_number
 
 from .common import ScrollableFrame, fit_window, selected_tree_id
 from .date_widgets import DateEntry
@@ -215,15 +216,18 @@ class ClientForm(tk.Toplevel):
         fiscal_scroll = ScrollableFrame(notebook, padding=18)
         mono_scroll = ScrollableFrame(notebook, padding=18)
         iibb_scroll = ScrollableFrame(notebook, padding=18)
+        alerts_scroll = ScrollableFrame(notebook, padding=18)
         notebook.add(general_scroll, text="Datos generales")
         notebook.add(fiscal_scroll, text="Regímenes")
         notebook.add(mono_scroll, text="Monotributo")
         notebook.add(iibb_scroll, text="Ingresos Brutos")
+        notebook.add(alerts_scroll, text="Alertas")
 
         self._build_general(general_scroll.content)
         self._build_fiscal(fiscal_scroll.content)
         self._build_monotributo(mono_scroll.content)
         self._build_iibb(iibb_scroll.content)
+        self._build_alerts(alerts_scroll.content)
 
         if client_id:
             self._load()
@@ -339,6 +343,20 @@ class ClientForm(tk.Toplevel):
         self.vars["categoria"].set("A")
         self.vars["mono_actividad"].set("Servicios")
         self.vars["mono_estado"].set("activo")
+        activity_code = self._field(
+            frame,
+            8,
+            "Código de actividad",
+            "mono_codigo_actividad",
+            help_text="Código numérico de la actividad declarada ante ARCA.",
+        )
+        activity_code.configure(
+            validate="key",
+            validatecommand=(
+                self.register(lambda value: not value or value.isdigit()),
+                "%P",
+            ),
+        )
 
     def _build_iibb(self, frame) -> None:
         ttk.Label(
@@ -384,6 +402,44 @@ class ClientForm(tk.Toplevel):
         self.vars["iibb_alicuota"].set("0.035")
         self.vars["iibb_estado"].set("activo")
 
+    def _build_alerts(self, frame) -> None:
+        ttk.Label(
+            frame,
+            text="Estos valores se aplican únicamente a este cliente.",
+            style="Subtitle.TLabel",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 12))
+        defaults = {
+            "alerta_limite": self.app.config_service.get_float(
+                "monotributo_alerta_porcentaje", 0.80
+            ) * 100,
+            "alerta_monto": self.app.config_service.get_float(
+                "monto_comprobante_significativo", 500_000
+            ),
+            "alerta_concentracion": self.app.config_service.get_float(
+                "concentracion_porcentaje", 0.30
+            ) * 100,
+            "alerta_compras_ventas": self.app.config_service.get_float(
+                "compras_ventas_alerta", 0.80
+            ) * 100,
+            "alerta_facturas_dia": self.app.config_service.get_float(
+                "muchas_facturas_dia", 10
+            ),
+            "alerta_facturas_contraparte": self.app.config_service.get_float(
+                "muchas_facturas_cliente", 10
+            ),
+        }
+        fields = (
+            ("Porcentaje del límite de Monotributo (%)", "alerta_limite", "Ejemplo: 80."),
+            ("Importe mínimo de factura elevada", "alerta_monto", "Ejemplo: 500000."),
+            ("Concentración por contraparte (%)", "alerta_concentracion", "Ejemplo: 30."),
+            ("Compras sobre ventas (%)", "alerta_compras_ventas", "Ejemplo: 80."),
+            ("Cantidad de facturas en un día", "alerta_facturas_dia", "Número entero."),
+            ("Cantidad de facturas por contraparte", "alerta_facturas_contraparte", "Número entero."),
+        )
+        for row, (label, key, help_text) in enumerate(fields, start=1):
+            self._field(frame, row, label, key, help_text=help_text)
+            self.vars[key].set(str(defaults[key]))
+
     def _load(self) -> None:
         bundle = self.app.client_service.get_bundle(self.client_id)
         if not bundle:
@@ -392,6 +448,7 @@ class ClientForm(tk.Toplevel):
             return
         client, fiscal, mono = bundle["client"], bundle["fiscal"], bundle["monotributo"]
         iibb = self.app.iibb_service.get_profile(self.client_id)
+        alerts = self.app.config_service.get_client_alerts(self.client_id)
         mapping = {
             "nombre": client.get("nombre_razon_social", ""),
             "cuit": client.get("cuit_cuil", ""),
@@ -413,6 +470,7 @@ class ClientForm(tk.Toplevel):
             "observaciones_fiscales": fiscal.get("observaciones", ""),
             "categoria": mono.get("categoria_actual", "A"),
             "mono_actividad": mono.get("actividad_fiscal", mono.get("actividad", "Servicios")),
+            "mono_codigo_actividad": mono.get("codigo_actividad", ""),
             "mono_denominacion": mono.get("denominacion", ""),
             "mono_fecha_alta": mono.get("fecha_alta", "") or "",
             "mono_fecha_baja": mono.get("fecha_baja_monotributo", "") or "",
@@ -426,12 +484,21 @@ class ClientForm(tk.Toplevel):
             "iibb_fecha_baja": iibb.get("fecha_baja", "") or "",
             "iibb_estado": iibb.get("estado", "activo"),
             "iibb_observaciones": iibb.get("observaciones", ""),
+            "alerta_limite": alerts["monotributo_alerta_porcentaje"] * 100,
+            "alerta_monto": alerts["monto_comprobante_significativo"],
+            "alerta_concentracion": alerts["concentracion_porcentaje"] * 100,
+            "alerta_compras_ventas": alerts["compras_ventas_alerta"] * 100,
+            "alerta_facturas_dia": alerts["muchas_facturas_dia"],
+            "alerta_facturas_contraparte": alerts["muchas_facturas_cliente"],
         }
         for key, value in mapping.items():
             self.vars[key].set(value)
 
     def save(self) -> None:
         try:
+            activity_code = self.vars["mono_codigo_actividad"].get().strip()
+            if activity_code and not activity_code.isdigit():
+                raise ValueError("El código de actividad debe contener solamente números.")
             fiscal_date = ""
             mono_date = self.vars["mono_fecha_alta"].get().strip()
             birth_date = self.vars["fecha_nacimiento"].get().strip()
@@ -472,6 +539,7 @@ class ClientForm(tk.Toplevel):
             mono = MonotributoProfile(
                 categoria_actual=self.vars["categoria"].get(),
                 actividad_fiscal=self.vars["mono_actividad"].get(),
+                codigo_actividad=activity_code,
                 denominacion=self.vars["mono_denominacion"].get(),
                 fecha_alta=mono_date,
                 fecha_baja=mono_end,
@@ -491,6 +559,40 @@ class ClientForm(tk.Toplevel):
                 "estado": self.vars["iibb_estado"].get(),
                 "observaciones": self.vars["iibb_observaciones"].get(),
             })
+            percentage_values = {
+                "monotributo_alerta_porcentaje": positive_number(
+                    self.vars["alerta_limite"].get(), "Porcentaje del límite", True
+                ) / 100,
+                "concentracion_porcentaje": positive_number(
+                    self.vars["alerta_concentracion"].get(), "Concentración", True
+                ) / 100,
+                "compras_ventas_alerta": positive_number(
+                    self.vars["alerta_compras_ventas"].get(), "Compras sobre ventas", True
+                ) / 100,
+            }
+            if any(value > 1 for value in percentage_values.values()):
+                raise ValueError("Los porcentajes de alerta deben estar entre 0 y 100 %.")
+            daily_count = positive_number(
+                self.vars["alerta_facturas_dia"].get(), "Facturas por día"
+            )
+            counterparty_count = positive_number(
+                self.vars["alerta_facturas_contraparte"].get(),
+                "Facturas por contraparte",
+            )
+            if not daily_count.is_integer() or not counterparty_count.is_integer():
+                raise ValueError("Las cantidades de facturas deben ser números enteros.")
+            self.app.config_service.save_client_alerts(
+                client_id,
+                {
+                    **percentage_values,
+                    "monto_comprobante_significativo": positive_number(
+                        self.vars["alerta_monto"].get(), "Importe mínimo", True
+                    ),
+                    "muchas_facturas_dia": daily_count,
+                    "muchas_facturas_cliente": counterparty_count,
+                },
+            )
+            self.app.alert_service.refresh(client_id)
             self.on_saved()
             self.destroy()
         except Exception as error:
