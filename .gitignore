@@ -1,0 +1,78 @@
+# Python: entornos, cachés y artefactos de compilación
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Pruebas, cobertura y herramientas de análisis
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Configuración local y datos sensibles
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Base de datos local (se crea automáticamente al ejecutar el programa)
+data/*
+!data/README.md
+!data/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Comprobantes AFIP/ARCA: pueden contener información fiscal sensible
+datos_afip/*
+!datos_afip/README.md
+!datos_afip/.gitkeep
+
+# Archivos creados por importaciones, exportaciones y reportes
+imports/*
+!imports/README.md
+!imports/.gitkeep
+exports/*
+!exports/README.md
+!exports/.gitkeep
+reportes/*
+!reportes/README.md
+!reportes/.gitkeep
+
+# Resultados generados por el analizador anterior en la raíz
+/Analisis de Movimientos Mensuales.xlsx
+/Resumen de Comprobantes Emitidos.xlsx
+/Resumen de Comprobantes Recibidos.xlsx
+~$*.xlsx
+~$*.xls
+
+# Editores, sistema operativo y herramientas locales
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+.agents/
+.codex/
+

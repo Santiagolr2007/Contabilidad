@@ -1,0 +1,25 @@
+# Normaliza los archivos de texto para evitar cambios falsos entre Windows y Git.
+* text=auto
+
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Formatos binarios del proyecto.
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.xlsx binary
+*.xls binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+
