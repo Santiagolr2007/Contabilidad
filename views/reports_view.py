@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import tkinter as tk
+import re
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from utils.formatters import money, percentage
+from utils.formatters import money, normalize_date, percentage
 from utils.validators import positive_number
 
 from .common import fit_window, make_tree_sortable
+from .date_widgets import DateEntry
 
 
 class ReportsView(ttk.Frame):
@@ -35,6 +37,8 @@ class ReportsView(ttk.Frame):
             },
         }
         self.client = tk.StringVar(value="Todos")
+        self.date_from = tk.StringVar()
+        self.date_to = tk.StringVar()
         ttk.Label(box, text="Reporte").grid(row=0, column=0, sticky="w", pady=6)
         ttk.Combobox(
             box,
@@ -51,8 +55,12 @@ class ReportsView(ttk.Frame):
             state="readonly",
             width=48,
         ).grid(row=1, column=1, sticky="ew", padx=10)
+        ttk.Label(box, text="Desde").grid(row=2, column=0, sticky="w", pady=6)
+        DateEntry(box, self.date_from).grid(row=2, column=1, sticky="ew", padx=10)
+        ttk.Label(box, text="Hasta").grid(row=3, column=0, sticky="w", pady=6)
+        DateEntry(box, self.date_to).grid(row=3, column=1, sticky="ew", padx=10)
         actions = ttk.Frame(box)
-        actions.grid(row=2, column=1, sticky="e", pady=12)
+        actions.grid(row=4, column=1, sticky="e", pady=12)
         ttk.Button(
             actions,
             text="Ver / editar últimos 12 meses",
@@ -69,6 +77,21 @@ class ReportsView(ttk.Frame):
     def _selected_client_id(self) -> int | None:
         return self.client_map.get(self.client.get())
 
+    def _date_range(self) -> tuple[str, str]:
+        date_from = self.date_from.get().strip()
+        date_to = self.date_to.get().strip()
+        normalized_from = normalize_date(date_from) if date_from else ""
+        normalized_to = normalize_date(date_to) if date_to else ""
+        if normalized_from and normalized_to and normalized_from > normalized_to:
+            raise ValueError("La fecha Desde no puede ser posterior a la fecha Hasta.")
+        return normalized_from, normalized_to
+
+    @staticmethod
+    def _safe_filename(value: str) -> str:
+        cleaned = re.sub(r'[<>:"/\\|?*;]+', " - ", value)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" .-")
+        return cleaned or "Reporte"
+
     def open_last_twelve(self) -> None:
         client_id = self._selected_client_id()
         if not client_id:
@@ -78,22 +101,31 @@ class ReportsView(ttk.Frame):
                 parent=self,
             )
             return
-        LastTwelveMonthsDialog(self, self.app, client_id)
+        try:
+            date_from, date_to = self._date_range()
+            LastTwelveMonthsDialog(
+                self, self.app, client_id, date_from=date_from, date_to=date_to
+            )
+        except Exception as error:
+            messagebox.showerror("Rango inválido", str(error), parent=self)
 
     def export(self) -> None:
         filename = filedialog.asksaveasfilename(
             parent=self,
             defaultextension=".xlsx",
             filetypes=(("Excel", "*.xlsx"),),
-            initialfile=self.report.get() + ".xlsx",
+            initialfile=self._safe_filename(self.report.get()) + ".xlsx",
         )
         if not filename:
             return
         try:
+            date_from, date_to = self._date_range()
             self.app.report_service.export_named(
                 self.report_map[self.report.get()],
                 Path(filename),
                 self._selected_client_id(),
+                date_from,
+                date_to,
             )
             messagebox.showinfo("Reporte creado", f"Se creó:\n{filename}")
         except Exception as error:
@@ -101,10 +133,19 @@ class ReportsView(ttk.Frame):
 
 
 class LastTwelveMonthsDialog(tk.Toplevel):
-    def __init__(self, parent, app, client_id: int) -> None:
+    def __init__(
+        self,
+        parent,
+        app,
+        client_id: int,
+        date_from: str = "",
+        date_to: str = "",
+    ) -> None:
         super().__init__(parent)
         self.app = app
         self.client_id = client_id
+        self.date_from = date_from
+        self.date_to = date_to
         self.fixed_amount = tk.StringVar(value="0")
         self.title("Últimos 12 meses")
         fit_window(self, 1180, 680)
@@ -163,7 +204,11 @@ class LastTwelveMonthsDialog(tk.Toplevel):
         self.refresh()
 
     def refresh(self) -> None:
-        report = self.app.report_service.last_twelve_months(self.client_id)
+        report = self.app.report_service.last_twelve_months(
+            self.client_id,
+            date_from=self.date_from,
+            date_to=self.date_to,
+        )
         self.rows = {row["periodo"]: row for row in report["rows"]}
         for item in self.tree.get_children():
             self.tree.delete(item)

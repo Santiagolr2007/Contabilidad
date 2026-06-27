@@ -317,6 +317,12 @@ class StageOneTests(unittest.TestCase):
         self.assertAlmostEqual(report["totals"]["porcentaje_compras"], 0.35)
         self.assertEqual(report["totals"]["ingresos_brutos"], 35)
         self.assertEqual(report["totals"]["regimen_simplificado"], 50)
+        custom = reports.last_twelve_months(
+            self.client_id,
+            date_from="2026-05-01",
+            date_to="2026-06-30",
+        )
+        self.assertEqual([row["mes"] for row in custom["rows"]], ["05-2026", "06-2026"])
 
         output = self.path / "ultimos_12.xlsx"
         reports.export_last_twelve_months(
@@ -329,6 +335,22 @@ class StageOneTests(unittest.TestCase):
         self.assertEqual(sheet["B14"].value, 1000)
         self.assertEqual(sheet["E14"].value, 0.35)
         self.assertEqual(sheet["E14"].number_format, "0.0%")
+        self.assertIsInstance(sheet["A2"].value, date)
+        self.assertEqual(sheet["A2"].number_format, "mm-yyyy")
+        workbook.close()
+
+        monthly_output = self.path / "ventas_rango.xlsx"
+        reports.export_named(
+            "ventas_mensuales",
+            monthly_output,
+            self.client_id,
+            "2026-06-01",
+            "2026-06-30",
+        )
+        workbook = load_workbook(monthly_output)
+        sheet = workbook["Reporte"]
+        self.assertIsInstance(sheet["A2"].value, date)
+        self.assertEqual(sheet["A2"].number_format, "mm-yyyy")
         workbook.close()
 
     def test_activity_code_and_client_alert_configuration(self) -> None:
