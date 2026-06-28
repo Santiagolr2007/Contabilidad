@@ -18,6 +18,8 @@ from services import (
     ConfigService,
     ImportService,
     IibbService,
+    LedgerExportService,
+    LedgerService,
     MonotributoService,
     ReportService,
     VoucherService,
@@ -67,6 +69,9 @@ class StageOneTests(unittest.TestCase):
             "honorarios",
             "configuracion",
             "configuracion_alertas_cliente",
+            "cliente_legajo_campos",
+            "cliente_legajo_registros",
+            "cliente_historial",
         }
         self.assertTrue(expected.issubset(names))
 
@@ -558,6 +563,65 @@ class StageOneTests(unittest.TestCase):
         self.assertEqual(workbook.sheetnames, ["Proveedores 2026"])
         self.assertEqual(workbook["Proveedores 2026"]["A1"].value, "Proveedor")
         workbook.close()
+
+    def test_integral_ledger_all_sections_summary_and_exports(self) -> None:
+        ledger = LedgerService(self.database)
+        payment_id = ledger.save_record(
+            self.client_id,
+            "pagos",
+            {
+                "fecha_emision": "01/06/2026",
+                "periodo": "06-2026",
+                "concepto": "Abono mensual",
+                "importe_facturado": "10000",
+                "importe_cobrado": "4000",
+                "estado_pago": "Pago parcial",
+                "fecha_vencimiento": "10/06/2026",
+                "responsable": "NATALIA",
+            },
+        )
+        self.assertEqual(ledger.get_record(payment_id)["saldo"], 6000)
+        for section in ledger.SECTIONS:
+            if section == "pagos":
+                continue
+            ledger.save_record(
+                self.client_id,
+                section,
+                {
+                    "descripcion": f"Registro {section}",
+                    "estado": "Recibido" if section == "documentacion" else "pendiente",
+                    "responsable": "NATALIA",
+                },
+            )
+        summary = ledger.summary(self.client_id)
+        self.assertEqual(summary["estado_legajo"], "Completo")
+        self.assertEqual(summary["pagos_pendientes"], 1)
+        self.assertEqual(summary["total_pendiente"], 6000)
+        self.assertGreaterEqual(len(ledger.history(self.client_id)), len(ledger.SECTIONS))
+
+        exporter = LedgerExportService(self.database, ledger)
+        xlsx = self.path / "legajo_integral.xlsx"
+        pdf = self.path / "legajo_integral.pdf"
+        archive = self.path / "legajos.zip"
+        index_xlsx = self.path / "indice_clientes.xlsx"
+        index_pdf = self.path / "indice_clientes.pdf"
+        exporter.export_excel(xlsx, self.client_id)
+        exporter.export_pdf(pdf, self.client_id)
+        exporter.export_batch(archive, [self.client_id], ("xlsx", "pdf"))
+        exporter.export_master_index_excel(index_xlsx, [self.client_id])
+        exporter.export_master_index_pdf(index_pdf, [self.client_id])
+        workbook = load_workbook(xlsx)
+        self.assertIn("Resumen", workbook.sheetnames)
+        self.assertIn("Pagos del Cliente", workbook.sheetnames)
+        self.assertIn("Riesgos", workbook.sheetnames)
+        self.assertEqual(workbook["Resumen"]["A1"].value, "Cliente")
+        self.assertEqual(workbook["Resumen"]["A6"].value, "Campo")
+        workbook.close()
+        self.assertGreater(pdf.stat().st_size, 1000)
+        self.assertGreater(archive.stat().st_size, 1000)
+        self.assertGreater(index_xlsx.stat().st_size, 1000)
+        self.assertGreater(index_pdf.stat().st_size, 1000)
+        self.assertEqual(ledger.delete_record(self.client_id, payment_id), 1)
 
     def test_arca_csv_import_and_iibb(self) -> None:
         source = self.path / "emitidos.csv"

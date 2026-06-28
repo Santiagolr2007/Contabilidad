@@ -12,6 +12,7 @@ from main import build_application  # noqa: E402
 from views.administrative_view import RecordDialog  # noqa: E402
 from views.clients_view import ClientForm  # noqa: E402
 from views.reports_view import LastTwelveMonthsDialog  # noqa: E402
+from views.ledger_view import ClientLedgerDialog  # noqa: E402
 
 
 def main() -> None:
@@ -50,6 +51,14 @@ def main() -> None:
                 dialog.update_idletasks()
                 dialog.destroy()
                 print("OK: formulario de cliente", flush=True)
+                clients = application.client_service.list_clients()
+                if clients:
+                    ledger = ClientLedgerDialog(
+                        application.current_view, application, int(clients[0]["id"])
+                    )
+                    ledger.update_idletasks()
+                    ledger.destroy()
+                    print("OK: legajo integral", flush=True)
             elif route in ("tareas", "vencimientos", "honorarios"):
                 dialog = RecordDialog(
                     application.current_view,

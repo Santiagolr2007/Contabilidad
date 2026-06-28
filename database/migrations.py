@@ -121,6 +121,57 @@ def migrate_database(connection: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_config_alertas_cliente
             ON configuracion_alertas_cliente(cliente_id);
+
+        CREATE TABLE IF NOT EXISTS cliente_legajo_campos (
+            cliente_id INTEGER NOT NULL,
+            seccion TEXT NOT NULL,
+            campo TEXT NOT NULL,
+            valor TEXT DEFAULT '',
+            actualizado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            responsable TEXT NOT NULL DEFAULT 'NATALIA',
+            PRIMARY KEY(cliente_id, seccion, campo),
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS cliente_legajo_registros (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            seccion TEXT NOT NULL,
+            fecha TEXT,
+            periodo TEXT,
+            descripcion TEXT DEFAULT '',
+            estado TEXT DEFAULT 'pendiente',
+            importe REAL NOT NULL DEFAULT 0,
+            saldo REAL NOT NULL DEFAULT 0,
+            vencimiento TEXT,
+            datos_json TEXT NOT NULL DEFAULT '{}',
+            responsable TEXT NOT NULL DEFAULT 'NATALIA',
+            creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            actualizado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS cliente_historial (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            tipo_cambio TEXT NOT NULL,
+            seccion TEXT DEFAULT '',
+            dato_modificado TEXT DEFAULT '',
+            estado_anterior TEXT DEFAULT '',
+            estado_nuevo TEXT DEFAULT '',
+            responsable TEXT NOT NULL DEFAULT 'NATALIA',
+            motivo TEXT DEFAULT '',
+            observaciones TEXT DEFAULT '',
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_legajo_registros_cliente_seccion
+            ON cliente_legajo_registros(cliente_id, seccion);
+        CREATE INDEX IF NOT EXISTS idx_legajo_registros_vencimiento
+            ON cliente_legajo_registros(vencimiento, estado);
+        CREATE INDEX IF NOT EXISTS idx_historial_cliente_fecha
+            ON cliente_historial(cliente_id, fecha);
         """
     )
     _add_columns(

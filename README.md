@@ -42,6 +42,26 @@ versiones anteriores.
 - Catorce reportes Excel y exportación del detalle de comprobantes.
 - Selector de calendario propio, sin dependencias gráficas externas.
 - Configuración editable de límites, alícuotas y categorías.
+- Índice Maestro de Clientes con filtros, casillas de selección y estados automáticos.
+- Legajo integral por cliente organizado en 18 solapas: resumen, datos,
+  servicio/presupuesto, pagos, obligaciones, relevamiento, documentación y
+  accesos, organismos, bancos, riesgos, tareas, vencimientos e historial/baja.
+- Cuenta corriente de honorarios con saldo automático, totales y alertas por deuda.
+- Historial automático de altas, modificaciones y eliminaciones del legajo.
+- Exportación parcial o completa a Excel/PDF y exportación masiva a ZIP.
+- Exportación del Índice Maestro visible a Excel o PDF.
+
+## Legajo integral de clientes
+
+Desde **Clientes**, use **Abrir legajo integral**. Cada solapa permite agregar,
+modificar, eliminar, filtrar y exportar sus registros. Los campos con opciones
+usan listas desplegables y muestran sus alternativas en azul. El responsable
+predeterminado es `NATALIA`, pero puede reemplazarse en cada registro.
+
+Para una exportación masiva, marque clientes con la casilla de la primera
+columna y pulse **Exportar clientes seleccionados**. Si no marca ninguno, se
+usan la selección normal de la tabla o todos los clientes que quedaron visibles
+después de aplicar los filtros.
 
 ## Importar comprobantes ARCA
 

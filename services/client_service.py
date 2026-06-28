@@ -59,6 +59,7 @@ class ClientService:
         fiscal: FiscalProfile,
         monotributo: MonotributoProfile | None = None,
     ) -> int:
+        is_new = client.id is None
         client.nombre_razon_social = required(
             client.nombre_razon_social, "Nombre o razón social"
         )
@@ -215,6 +216,19 @@ class ClientService:
                             monotributo.observaciones_fiscales.strip(),
                         ),
                     )
+                connection.execute(
+                    """
+                    INSERT INTO cliente_historial(
+                        cliente_id, tipo_cambio, seccion, dato_modificado,
+                        estado_nuevo, responsable
+                    ) VALUES (?, ?, 'datos_cliente', 'Ficha principal', ?, 'NATALIA')
+                    """,
+                    (
+                        client_id,
+                        "Alta" if is_new else "Modificación de datos",
+                        client.estado,
+                    ),
+                )
                 return client_id
         except sqlite3.IntegrityError as error:
             if "cuit_cuil" in str(error):

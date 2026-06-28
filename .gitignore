@@ -31,6 +31,7 @@ htmlcov/
 *.tmp
 *.bak
 *.swp
+tmp/
 
 # Base de datos local (se crea automáticamente al ejecutar el programa)
 data/*
@@ -75,4 +76,3 @@ Thumbs.db
 Desktop.ini
 .agents/
 .codex/
-

@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import tkinter as tk
 import re
+from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from models import Client, FiscalProfile, MonotributoProfile
-from utils.formatters import normalize_date
+from utils.formatters import display_date, normalize_date
 from utils.validators import positive_number
 
 from .common import ScrollableFrame, fit_window, selected_tree_id
 from .date_widgets import DateEntry
+from .ledger_view import BatchLedgerExportDialog, ClientLedgerDialog
 
 
 class ClientsView(ttk.Frame):
@@ -19,6 +21,13 @@ class ClientsView(ttk.Frame):
         self.app = app
         self.search = tk.StringVar()
         self.include_inactive = tk.BooleanVar(value=False)
+        self.state_filter = tk.StringVar(value="Todos")
+        self.regime_filter = tk.StringVar(value="Todos")
+        self.risk_filter = tk.StringVar(value="Todos")
+        self.payment_filter = tk.StringVar(value="Todos")
+        self.documentation_filter = tk.StringVar(value="Todos")
+        self.due_filter = tk.StringVar(value="Todos")
+        self.checked_client_ids: set[int] = set()
 
         top = ttk.Frame(self)
         top.pack(fill="x")
@@ -50,20 +59,50 @@ class ClientsView(ttk.Frame):
             variable=self.include_inactive,
             command=self.refresh,
         ).pack(side="left", padx=16)
+        advanced_filters = ttk.Frame(self)
+        advanced_filters.pack(fill="x", pady=(0, 10))
+        for label, variable, values in (
+            ("Estado", self.state_filter, ("Todos", "Activo", "En alta", "En regularización", "Pausado", "Baja", "Ex cliente", "Solo consulta", "Pendiente de documentación", "Inactivo")),
+            ("Régimen", self.regime_filter, ("Todos", *ClientForm.REGIMES)),
+            ("Riesgo", self.risk_filter, ("Todos", "Bajo", "Medio", "Alto")),
+            ("Pagos", self.payment_filter, ("Todos", "Al día", "Pendiente", "Vencido")),
+            ("Documentación", self.documentation_filter, ("Todos", "Completa", "Pendiente", "Sin cargar")),
+            ("Vencimientos", self.due_filter, ("Todos", "Próximos", "Sin próximos")),
+        ):
+            ttk.Label(advanced_filters, text=label).pack(side="left", padx=(8, 2))
+            combo = ttk.Combobox(advanced_filters, textvariable=variable, values=values, state="readonly", width=13)
+            combo.pack(side="left")
+            combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
 
-        columns = ("cuit", "tipo", "actividad", "regimen", "categoria", "estado")
+        columns = (
+            "seleccionar", "cuit", "tipo", "actividad", "regimen", "categoria", "estado",
+            "servicio", "responsable", "legajo", "pagos", "documentacion", "riesgo",
+            "ultimo_control", "vencimiento", "observaciones",
+        )
         tree_frame = ttk.Frame(self)
         tree_frame.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(tree_frame, columns=columns, show="tree headings")
+        self.tree = ttk.Treeview(
+            tree_frame, columns=columns, show="tree headings", selectmode="extended"
+        )
         self.tree.heading("#0", text="Nombre / razón social")
         self.tree.column("#0", width=240)
         settings = (
+            ("seleccionar", "Sel.", 48),
             ("cuit", "CUIT/CUIL", 110),
             ("tipo", "Persona", 110),
             ("actividad", "Actividad", 190),
             ("regimen", "Régimen", 140),
             ("categoria", "Categoría", 75),
             ("estado", "Estado", 80),
+            ("servicio", "Servicio contratado", 155),
+            ("responsable", "Responsable", 105),
+            ("legajo", "Estado legajo", 105),
+            ("pagos", "Pagos", 95),
+            ("documentacion", "Documentación", 110),
+            ("riesgo", "Riesgo", 80),
+            ("ultimo_control", "Último control", 105),
+            ("vencimiento", "Próximo vencimiento", 120),
+            ("observaciones", "Observaciones internas", 210),
         )
         for column, label, width in settings:
             self.tree.heading(column, text=label)
@@ -77,11 +116,15 @@ class ClientsView(ttk.Frame):
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
         self.tree.bind("<Double-1>", lambda _event: self.edit_client())
+        self.tree.bind("<Button-1>", self._toggle_checkbox, add="+")
 
         actions = ttk.Frame(self)
         actions.pack(fill="x", pady=(10, 0))
         ttk.Button(actions, text="Editar / ficha fiscal", command=self.edit_client).pack(
             side="left"
+        )
+        ttk.Button(actions, text="Abrir legajo integral", command=self.open_ledger).pack(
+            side="left", padx=(8, 0)
         )
         ttk.Button(actions, text="Desactivar cliente", command=self.deactivate).pack(
             side="left", padx=8
@@ -91,12 +134,23 @@ class ClientsView(ttk.Frame):
             text="Eliminar cliente y todos sus datos",
             command=self.delete_client,
         ).pack(side="left")
-        ttk.Button(
-            actions,
-            text="Exportar ficha a Excel",
-            command=self.export_client,
-        ).pack(side="left", padx=8)
         ttk.Button(actions, text="Actualizar", command=self.refresh).pack(side="right")
+        exports = ttk.Frame(self)
+        exports.pack(fill="x", pady=(6, 0))
+        ttk.Button(
+            exports, text="Exportar ficha rápida a Excel", command=self.export_client
+        ).pack(side="left")
+        ttk.Button(
+            exports,
+            text="Exportar clientes seleccionados (Excel / PDF)",
+            command=self.export_selected_clients,
+        ).pack(side="left", padx=8)
+        ttk.Button(
+            exports, text="Exportar índice visible Excel", command=lambda: self.export_index("xlsx")
+        ).pack(side="left")
+        ttk.Button(
+            exports, text="Exportar índice visible PDF", command=lambda: self.export_index("pdf")
+        ).pack(side="left", padx=8)
 
         self.refresh()
         if action == "new":
@@ -106,26 +160,125 @@ class ClientsView(ttk.Frame):
         for item in self.tree.get_children():
             self.tree.delete(item)
         clients = self.app.client_service.list_clients(
-            self.search.get(), self.include_inactive.get()
+            "", self.include_inactive.get()
         )
+        term = self.search.get().strip().casefold()
         for client in clients:
+            summary = self.app.ledger_service.summary(int(client["id"]))
+            if term and term not in " ".join((
+                str(client["nombre_razon_social"]), str(client["cuit_cuil"]),
+                str(client.get("rubro_display", "")), summary["tipo_cliente"],
+                summary["estado_cliente"], summary["responsable_interno"],
+                summary["servicio_contratado"], summary["actividad_principal"],
+            )).casefold():
+                continue
+            payment_state = "Vencido" if summary["pagos_vencidos"] else (
+                "Pendiente" if summary["pagos_pendientes"] else "Al día"
+            )
+            if self.state_filter.get() != "Todos" and summary["estado_cliente"] != self.state_filter.get():
+                continue
+            if self.regime_filter.get() != "Todos" and client["regimen_principal"] != self.regime_filter.get():
+                continue
+            if self.risk_filter.get() != "Todos" and summary["riesgo_general"] != self.risk_filter.get():
+                continue
+            if self.payment_filter.get() != "Todos" and payment_state != self.payment_filter.get():
+                continue
+            if self.documentation_filter.get() != "Todos" and summary["estado_documentacion"] != self.documentation_filter.get():
+                continue
+            has_due = summary["proximo_vencimiento"] not in ("", "—", None)
+            if self.due_filter.get() == "Próximos" and not has_due:
+                continue
+            if self.due_filter.get() == "Sin próximos" and has_due:
+                continue
             self.tree.insert(
                 "",
                 "end",
                 iid=str(client["id"]),
                 text=client["nombre_razon_social"],
                 values=(
+                    "☑" if int(client["id"]) in self.checked_client_ids else "☐",
                     client["cuit_cuil"],
-                    client["tipo_persona"].replace("_", " ").title(),
+                    summary["tipo_cliente"],
                     client.get("rubro_display", ""),
                     client["regimen_principal"].replace("_", " ").title(),
                     client["categoria_actual"],
-                    client["estado"].title(),
+                    summary["estado_cliente"],
+                    summary["servicio_contratado"],
+                    summary["responsable_interno"],
+                    summary["estado_legajo"],
+                    payment_state,
+                    summary["estado_documentacion"],
+                    summary["riesgo_general"],
+                    display_date(summary["ultimo_control"]),
+                    display_date(summary["proximo_vencimiento"]),
+                    summary["observacion_ejecutiva"],
                 ),
             )
 
+    def _toggle_checkbox(self, event) -> None:
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        if self.tree.identify_column(event.x) != "#1":
+            return
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        client_id = int(item)
+        if client_id in self.checked_client_ids:
+            self.checked_client_ids.remove(client_id)
+            mark = "☐"
+        else:
+            self.checked_client_ids.add(client_id)
+            mark = "☑"
+        values = list(self.tree.item(item, "values"))
+        values[0] = mark
+        self.tree.item(item, values=values)
+
     def new_client(self) -> None:
         ClientForm(self, self.app, None, self.refresh)
+
+    def open_ledger(self) -> None:
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("Seleccionar cliente", "Seleccioná un cliente de la lista.")
+            return
+        ClientLedgerDialog(self, self.app, int(selection[0]))
+
+    def export_selected_clients(self) -> None:
+        selection = self.tree.selection()
+        visible = {int(item) for item in self.tree.get_children()}
+        checked = sorted(self.checked_client_ids & visible)
+        client_ids = checked or [int(item) for item in (selection or self.tree.get_children())]
+        if not client_ids:
+            messagebox.showinfo("Sin clientes", "No hay clientes visibles para exportar.")
+            return
+        BatchLedgerExportDialog(self, self.app, client_ids)
+
+    def export_index(self, format_name: str) -> None:
+        client_ids = [int(item) for item in self.tree.get_children()]
+        if not client_ids:
+            messagebox.showinfo("Sin clientes", "No hay clientes visibles para exportar.")
+            return
+        extension = f".{format_name}"
+        filename = filedialog.asksaveasfilename(
+            parent=self,
+            title="Exportar índice maestro visible",
+            defaultextension=extension,
+            initialfile=f"Indice_Maestro_Clientes_{date.today().isoformat()}{extension}",
+            filetypes=((format_name.upper(), f"*{extension}"),),
+        )
+        if not filename:
+            return
+        try:
+            method = (
+                self.app.ledger_export_service.export_master_index_excel
+                if format_name == "xlsx"
+                else self.app.ledger_export_service.export_master_index_pdf
+            )
+            output = method(Path(filename), client_ids)
+            messagebox.showinfo("Índice exportado", f"Se creó:\n{output}")
+        except Exception as error:
+            messagebox.showerror("No se pudo exportar", str(error))
 
     def edit_client(self) -> None:
         client_id = selected_tree_id(self.tree)
