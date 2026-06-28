@@ -27,6 +27,16 @@ def normalize_date(value: str) -> str:
     return parse_date(value).isoformat()
 
 
+def display_date(value: str | None) -> str:
+    """Muestra fechas de comprobantes como DD-MM-AAAA sin alterar su valor guardado."""
+    if not value:
+        return ""
+    try:
+        return parse_date(str(value)).strftime("%d-%m-%Y")
+    except ValueError:
+        return str(value)
+
+
 def normalize_period(value: str) -> str:
     value = value.strip().replace("/", "-")
     try:

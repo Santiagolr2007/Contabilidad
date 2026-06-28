@@ -120,20 +120,16 @@ class ImportService:
                 if alias in normalized:
                     mapping[field] = normalized[alias]
                     break
-        counterpart_fields = (
-            ("denominacion_receptor", "nro_doc_receptor")
-            if kind == "ventas"
-            else ("denominacion_emisor", "nro_doc_emisor")
-        )
         required = [
             "fecha",
             "tipo_comprobante",
             "punto_venta",
             "numero_desde",
-            counterpart_fields[0],
             "moneda",
             "importe_total",
         ]
+        if kind == "compras":
+            required.append("denominacion_emisor")
         missing = [field for field in required if field not in mapping]
         return mapping, missing
 
@@ -251,6 +247,8 @@ class ImportService:
                     counterpart_name = self._value(row, mapping, "denominacion_emisor")
                     counterpart_document = self._value(row, mapping, "nro_doc_emisor")
                     counterpart_type = self._value(row, mapping, "tipo_doc_emisor")
+                if preview.kind == "ventas" and not counterpart_name:
+                    counterpart_name = "CONSUMIDOR FINAL"
                 point = self._identifier(self._value(row, mapping, "punto_venta")) or "0"
                 number = self._identifier(self._value(row, mapping, "numero_desde")) or f"PENDIENTE-{index + 2}"
                 observed = not counterpart_name or point == "0" or number.startswith("PENDIENTE-")

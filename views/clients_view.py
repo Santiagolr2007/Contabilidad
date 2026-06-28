@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+import re
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
 from models import Client, FiscalProfile, MonotributoProfile
 from utils.formatters import normalize_date
@@ -89,6 +91,11 @@ class ClientsView(ttk.Frame):
             text="Eliminar cliente y todos sus datos",
             command=self.delete_client,
         ).pack(side="left")
+        ttk.Button(
+            actions,
+            text="Exportar ficha a Excel",
+            command=self.export_client,
+        ).pack(side="left", padx=8)
         ttk.Button(actions, text="Actualizar", command=self.refresh).pack(side="right")
 
         self.refresh()
@@ -169,6 +176,39 @@ class ClientsView(ttk.Frame):
             )
         except Exception as error:
             messagebox.showerror("No se pudo eliminar", str(error))
+
+    def export_client(self) -> None:
+        client_id = selected_tree_id(self.tree)
+        if client_id is None:
+            messagebox.showinfo(
+                "Seleccionar cliente", "Seleccioná el cliente que querés exportar."
+            )
+            return
+        bundle = self.app.client_service.get_bundle(client_id)
+        if not bundle:
+            messagebox.showerror("Cliente inexistente", "No se encontró el cliente.")
+            return
+        client = bundle["client"]
+        name = re.sub(
+            r'[<>:"/\\|?*;]+', "_", client["nombre_razon_social"]
+        ).strip(" ._")
+        initial = f"Legajo_Cliente_{name}_{client['cuit_cuil']}.xlsx"
+        filename = filedialog.asksaveasfilename(
+            parent=self,
+            title="Exportar ficha del cliente",
+            defaultextension=".xlsx",
+            initialfile=initial,
+            filetypes=(("Excel", "*.xlsx"),),
+        )
+        if not filename:
+            return
+        try:
+            output = self.app.report_service.export_client_file(
+                Path(filename), client_id
+            )
+            messagebox.showinfo("Ficha exportada", f"Se creó:\n{output}")
+        except Exception as error:
+            messagebox.showerror("No se pudo exportar", str(error))
 
 
 class ClientForm(tk.Toplevel):

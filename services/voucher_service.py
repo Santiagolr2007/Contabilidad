@@ -73,6 +73,8 @@ class VoucherService:
         voucher.numero_comprobante = required(
             voucher.numero_comprobante, "Número de comprobante"
         )
+        if kind == "ventas" and not voucher.contraparte_nombre.strip():
+            voucher.contraparte_nombre = "CONSUMIDOR FINAL"
         voucher.contraparte_nombre = required(
             voucher.contraparte_nombre, "Cliente/proveedor"
         )

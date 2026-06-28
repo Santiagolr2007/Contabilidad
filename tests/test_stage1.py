@@ -171,12 +171,26 @@ class StageOneTests(unittest.TestCase):
         self.vouchers.create("ventas", normal)
         self.vouchers.create("ventas", credit)
         self.vouchers.create("ventas", annulled)
+        self.vouchers.create(
+            "ventas",
+            Voucher(
+                cliente_id=self.client_id,
+                fecha=date.today().isoformat(),
+                periodo_fiscal=period,
+                tipo_comprobante="Factura C",
+                punto_venta="1",
+                numero_comprobante="4",
+                contraparte_nombre="",
+                importe_original=500,
+            ),
+        )
         rows = self.vouchers.list("ventas", self.client_id, period)
         by_number = {row["numero_comprobante"]: row for row in rows}
         self.assertEqual(by_number["1"]["importe_neto_fiscal"], 600_000)
         self.assertEqual(by_number["2"]["importe_neto_fiscal"], -100_000)
         self.assertEqual(by_number["3"]["importe_neto_fiscal"], 0)
-        self.assertEqual(self.vouchers.stats("ventas", self.client_id)["mes"], 500_000)
+        self.assertEqual(by_number["4"]["contraparte_nombre"], "CONSUMIDOR FINAL")
+        self.assertEqual(self.vouchers.stats("ventas", self.client_id)["mes"], 500_500)
         alert_count = self.database.query_one(
             "SELECT COUNT(*) AS n FROM alertas_fiscales WHERE cliente_id = ?",
             (self.client_id,),
@@ -189,7 +203,9 @@ class StageOneTests(unittest.TestCase):
         )
         self.assertEqual(deleted, 2)
         remaining = self.vouchers.list("ventas", self.client_id, period)
-        self.assertEqual([row["numero_comprobante"] for row in remaining], ["3"])
+        self.assertEqual(
+            [row["numero_comprobante"] for row in remaining], ["4", "3"]
+        )
 
     def test_dashboard_category_and_excel_export(self) -> None:
         period = date.today().strftime("%Y-%m")
@@ -405,6 +421,15 @@ class StageOneTests(unittest.TestCase):
         )
         self.assertEqual(count["n"], 0)
 
+        output = self.path / "legajo_cliente.xlsx"
+        ReportService(self.vouchers).export_client_file(output, configured_id)
+        workbook = load_workbook(output)
+        self.assertIn("Resumen", workbook.sheetnames)
+        self.assertIn("Monotributo", workbook.sheetnames)
+        headers = [cell.value for cell in workbook["Monotributo"][1]]
+        self.assertIn("codigo_actividad", headers)
+        workbook.close()
+
     def test_iibb_monthly_detail_and_payable(self) -> None:
         iibb = IibbService(self.database, self.config)
         iibb.save_profile(
@@ -475,6 +500,65 @@ class StageOneTests(unittest.TestCase):
         self.assertEqual(service.get("honorarios", fee_id)["importe"], 12000)
         self.assertEqual(service.delete("honorarios", fee_id), 1)
 
+        due_id = service.create(
+            "vencimientos",
+            {
+                "cliente_id": self.client_id,
+                "impuesto": "Ingresos Brutos",
+                "periodo": "2026-06",
+                "fecha_vencimiento": "2026-07-15",
+                "estado": "pendiente",
+            },
+        )
+        due = service.get("vencimientos", due_id)
+        due.update({"estado": "pagado", "fecha_vencimiento": "2026-07-16"})
+        service.update("vencimientos", due_id, due)
+        self.assertEqual(service.get("vencimientos", due_id)["estado"], "pagado")
+        self.assertEqual(service.delete("vencimientos", due_id), 1)
+
+    def test_supplier_matrix_by_month_and_total(self) -> None:
+        purchases = (
+            ("2026-01-10", "1", "Proveedor Uno", 100),
+            ("2026-02-10", "2", "Proveedor Uno", 200),
+            ("2026-01-12", "3", "Proveedor Dos", 50),
+        )
+        for voucher_date, number, provider, amount in purchases:
+            self.vouchers.create(
+                "compras",
+                Voucher(
+                    cliente_id=self.client_id,
+                    fecha=voucher_date,
+                    periodo_fiscal=voucher_date[:7],
+                    tipo_comprobante="Factura A",
+                    punto_venta="30",
+                    numero_comprobante=number,
+                    contraparte_nombre=provider,
+                    importe_original=amount,
+                ),
+            )
+        reports = ReportService(self.vouchers)
+        matrix = reports.supplier_matrix(self.client_id, 2026)
+        self.assertEqual(
+            list(matrix.columns),
+            [
+                "Proveedor", "Enero", "Febrero", "Marzo", "Abril", "Mayo",
+                "Junio", "Julio", "Agosto", "Septiembre", "Octubre",
+                "Noviembre", "Diciembre", "Total",
+            ],
+        )
+        provider = matrix[matrix["Proveedor"] == "Proveedor Uno"].iloc[0]
+        self.assertEqual(provider["Enero"], 100)
+        self.assertEqual(provider["Febrero"], 200)
+        self.assertEqual(provider["Total"], 300)
+        self.assertEqual(matrix.iloc[-1]["Total"], 350)
+
+        output = self.path / "proveedores.xlsx"
+        reports.export_supplier_matrix(output, self.client_id, 2026)
+        workbook = load_workbook(output)
+        self.assertEqual(workbook.sheetnames, ["Proveedores 2026"])
+        self.assertEqual(workbook["Proveedores 2026"]["A1"].value, "Proveedor")
+        workbook.close()
+
     def test_arca_csv_import_and_iibb(self) -> None:
         source = self.path / "emitidos.csv"
         source.write_text(
@@ -506,6 +590,21 @@ class StageOneTests(unittest.TestCase):
         deleted = importer.delete_batch(self.client_id, result["import_id"])
         self.assertEqual(deleted, 2)
         self.assertEqual(self.vouchers.list("ventas", self.client_id, "2026-06"), [])
+
+        no_receiver = self.path / "emitidos_sin_receptor.csv"
+        no_receiver.write_text(
+            '"Fecha";"Tipo de Comprobante";"Punto de Venta";'
+            '"Número Desde";"Tipo Cambio";"Moneda";"Imp. Total"\n'
+            '2026-06-03;11;2;20;1;$;500,00\n',
+            encoding="utf-8",
+        )
+        preview = importer.preview(no_receiver, "ventas")
+        self.assertEqual(preview.missing, [])
+        result = importer.import_rows(preview, self.client_id)
+        self.assertEqual(result["imported"], 1)
+        row = self.vouchers.list("ventas", self.client_id, "2026-06")[0]
+        self.assertEqual(row["contraparte_nombre"], "CONSUMIDOR FINAL")
+        importer.delete_batch(self.client_id, result["import_id"])
 
 
 if __name__ == "__main__":

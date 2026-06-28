@@ -4,7 +4,7 @@ import tkinter as tk
 from datetime import date
 from tkinter import messagebox, ttk
 
-from utils.formatters import money, percentage
+from utils.formatters import display_date, money, percentage
 from utils.validators import positive_number
 
 from .common import MetricCard, ScrollableFrame, fit_window, make_tree_sortable
@@ -100,6 +100,8 @@ class MonotributoView(ttk.Frame):
         items=(("Actividad fiscal",client.get("actividad_fiscal") or "—"),("Denominación",client.get("denominacion") or "—"),("Categoría actual",client.get("categoria_actual") or "—"),("Categoría sugerida",data["suggested_category"]),("Alta monotributo",client.get("fecha_alta") or "—"),("Ingresos últimos 12 meses",money(data["sales"].get("ultimos_12",0))),("Ventas año",money(data["sales"].get("anio",0))),("Compras año",money(data["purchases"].get("anio",0))),("Estado pago mensual",client.get("estado_pago_mensual") or "pendiente"),("Estado recategorización",client.get("estado_recategorizacion") or "pendiente"),("Riesgo exclusión",client.get("riesgo_exclusion") or "normal"),("Observaciones",client.get("observaciones_fiscales") or "—"))
         for row,(label,value) in enumerate(items):
             ttk.Label(frame,text=label,font=("Segoe UI",9,"bold")).grid(row=row,column=0,sticky="w",pady=5); ttk.Label(frame,text=value).grid(row=row,column=1,sticky="w",padx=15)
+        ttk.Label(frame,text="Código de actividad",font=("Segoe UI",9,"bold")).grid(row=len(items),column=0,sticky="w",pady=5)
+        ttk.Label(frame,text=client.get("codigo_actividad") or "—").grid(row=len(items),column=1,sticky="w",padx=15,pady=5)
 
     def _add_iibb_tab(self, client_id: int) -> None:
         scroll=ScrollableFrame(self.details,padding=12);self.details.add(scroll,text="IIBB");frame=scroll.content
@@ -200,7 +202,7 @@ class MonotributoView(ttk.Frame):
                         "",
                         "end",
                         values=(
-                            row["fecha"], row["tipo_comprobante"], row["punto_venta"],
+                            display_date(row["fecha"]), row["tipo_comprobante"], row["punto_venta"],
                             row["numero_comprobante"], row["contraparte_nombre"],
                             row["contraparte_documento"], money(row["importe_venta"]),
                             percentage(row["alicuota"]), money(row["impuesto_calculado"]),
@@ -259,12 +261,27 @@ class MonotributoView(ttk.Frame):
         ttk.Button(frame,text="Guardar análisis",style="Primary.TButton",command=save).grid(row=5,column=3,sticky="e",pady=8)
 
     def _add_alerts_tab(self, client_id: int) -> None:
-        frame=ttk.Frame(self.details,padding=10); self.details.add(frame,text="Alertas")
-        ttk.Button(frame,text="Recalcular alertas",command=lambda:self._refresh_alerts(client_id)).pack(anchor="e",pady=(0,6))
-        tree=ttk.Treeview(frame,columns=("periodo","tipo","descripcion","gravedad","estado"),show="headings")
-        for col in ("periodo","tipo","descripcion","gravedad","estado"):tree.heading(col,text=col.title());tree.column(col,width=150)
-        tree.pack(fill="both",expand=True)
-        for row in self.app.database.query("SELECT * FROM alertas_fiscales WHERE cliente_id=? ORDER BY fecha_creacion DESC",(client_id,)):tree.insert("","end",values=(row["periodo"],row["tipo_alerta"],row["descripcion"],row["gravedad"],row["estado"]))
+        frame = ttk.Frame(self.details, padding=10)
+        self.details.add(frame, text="Alertas")
+        ttk.Button(
+            frame,
+            text="Recalcular alertas",
+            command=lambda: self._refresh_alerts(client_id),
+        ).pack(anchor="e", pady=(0, 6))
+        table = ttk.Frame(frame)
+        table.pack(fill="both", expand=True)
+        columns = ("periodo", "tipo", "descripcion", "gravedad", "estado")
+        tree = ttk.Treeview(table, columns=columns, show="headings")
+        widths = {"periodo": 90, "tipo": 190, "descripcion": 480, "gravedad": 90, "estado": 100}
+        for column in columns:
+            tree.heading(column, text=column.title())
+            tree.column(column, width=widths[column], minwidth=70)
+        self._add_tree_scrollbars(table, tree)
+        for row in self.app.database.query(
+            "SELECT * FROM alertas_fiscales WHERE cliente_id=? ORDER BY fecha_creacion DESC",
+            (client_id,),
+        ):
+            tree.insert("", "end", values=(row["periodo"], row["tipo_alerta"], row["descripcion"], row["gravedad"], row["estado"]))
 
     def _refresh_alerts(self, client_id: int) -> None:
         try:
@@ -282,8 +299,10 @@ class MonotributoView(ttk.Frame):
     def _add_monthly_tab(self, title: str, rows: list[dict]) -> None:
         frame = ttk.Frame(self.details, padding=10)
         self.details.add(frame, text=title)
+        table = ttk.Frame(frame)
+        table.pack(fill="both", expand=True)
         columns = ("periodo", "facturas", "nc", "nd", "neto", "cantidad")
-        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        tree = ttk.Treeview(table, columns=columns, show="headings")
         settings = (
             ("periodo", "Período", 90),
             ("facturas", "Facturas", 130),
@@ -295,7 +314,7 @@ class MonotributoView(ttk.Frame):
         for column, label, width in settings:
             tree.heading(column, text=label)
             tree.column(column, width=width)
-        tree.pack(fill="both", expand=True)
+        self._add_tree_scrollbars(table, tree)
         make_tree_sortable(tree, {"cantidad", "total", "participacion"})
         for row in rows:
             tree.insert(
@@ -314,11 +333,13 @@ class MonotributoView(ttk.Frame):
     def _add_ranking_tab(self, title: str, rows: list[dict]) -> None:
         frame = ttk.Frame(self.details, padding=10)
         self.details.add(frame, text=title)
+        table = ttk.Frame(frame)
+        table.pack(fill="both", expand=True)
         columns = ("puesto", "nombre", "documento", "cantidad", "total", "participacion")
-        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        tree = ttk.Treeview(table, columns=columns, show="headings")
         settings = (
             ("puesto", "Puesto", 60),
-            ("nombre", "Nombre", 240),
+            ("nombre", "Nombre", 340),
             ("documento", "CUIT/DNI", 110),
             ("cantidad", "Comprobantes", 90),
             ("total", "Total", 130),
@@ -327,7 +348,7 @@ class MonotributoView(ttk.Frame):
         for column, label, width in settings:
             tree.heading(column, text=label)
             tree.column(column, width=width)
-        tree.pack(fill="both", expand=True)
+        self._add_tree_scrollbars(table, tree)
         make_tree_sortable(tree, {"cantidad", "total", "participacion"})
         for row in rows:
             tree.insert(
@@ -342,6 +363,17 @@ class MonotributoView(ttk.Frame):
                     percentage(row["porcentaje"]),
                 ),
             )
+
+    @staticmethod
+    def _add_tree_scrollbars(parent, tree: ttk.Treeview) -> None:
+        yscroll = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
+        xscroll = ttk.Scrollbar(parent, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        parent.rowconfigure(0, weight=1)
+        parent.columnconfigure(0, weight=1)
 
 
 class ConvenioDialog(tk.Toplevel):

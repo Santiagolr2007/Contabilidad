@@ -18,8 +18,12 @@ class MetricCard(tk.Frame):
         )
         if accent:
             tk.Frame(self, bg=accent, height=4).pack(fill="x", pady=(0, 8))
-        ttk.Label(self, text=title, style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(self, text=value, style="CardValue.TLabel").pack(anchor="w", pady=(4, 0))
+        ttk.Label(
+            self, text=title, style="CardTitle.TLabel", wraplength=280, justify="left"
+        ).pack(anchor="w", fill="x")
+        ttk.Label(
+            self, text=value, style="CardValue.TLabel", wraplength=280, justify="left"
+        ).pack(anchor="w", fill="x", pady=(4, 0))
 
 
 class ScrollableFrame(ttk.Frame):

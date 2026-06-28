@@ -50,7 +50,7 @@ def main() -> None:
                 dialog.update_idletasks()
                 dialog.destroy()
                 print("OK: formulario de cliente", flush=True)
-            elif route in ("tareas", "honorarios"):
+            elif route in ("tareas", "vencimientos", "honorarios"):
                 dialog = RecordDialog(
                     application.current_view,
                     application,

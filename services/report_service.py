@@ -22,6 +22,7 @@ class ReportService:
         "ventas_12": "Ventas últimos 12 meses",
         "compras_anio": "Compras acumuladas año calendario",
         "compras_12": "Compras últimos 12 meses",
+        "proveedores_anual": "Compras por proveedor y mes",
         "recategorizacion": "Recategorización de monotributo",
         "significativos": "Comprobantes significativos",
         "usd": "Comprobantes en USD",
@@ -136,6 +137,15 @@ class ReportService:
             return self.export_last_twelve_months(
                 destination, client_id, date_from=date_from, date_to=date_to
             )
+        if report == "proveedores_anual":
+            if not client_id:
+                raise ValueError("Seleccioná un cliente para generar el reporte de proveedores.")
+            start, end = self._validate_date_range(date_from, date_to)
+            years = {value.year for value in (start, end) if value}
+            if len(years) > 1:
+                raise ValueError("El reporte de proveedores debe corresponder a un único año.")
+            year = next(iter(years), date.today().year)
+            return self.export_supplier_matrix(destination, client_id, year)
 
         condition = " AND cliente_id = ?" if client_id else ""
         params = (client_id,) if client_id else ()
@@ -413,6 +423,159 @@ class ReportService:
             cell.fill = total_fill
             cell.font = Font(bold=True, color="17324D")
             cell.border = total_border
+        workbook.save(destination)
+        return destination
+
+    def export_client_file(self, destination: Path, client_id: int) -> Path:
+        """Exporta la ficha existente del cliente en hojas separadas y auditables."""
+        client_row = self.database.query_one(
+            """
+            SELECT c.*, df.regimen_principal, df.condicion_iva,
+                   df.domicilio_fiscal, df.observaciones AS observaciones_fiscales
+            FROM clientes c
+            LEFT JOIN datos_fiscales_cliente df ON df.cliente_id = c.id
+            WHERE c.id = ?
+            """,
+            (client_id,),
+        )
+        if not client_row:
+            raise ValueError("El cliente seleccionado no existe.")
+        client = dict(client_row)
+
+        def records(sql: str) -> list[dict]:
+            return [dict(row) for row in self.database.query(sql, (client_id,))]
+
+        profiles = {
+            "Resumen": {
+                "Nombre / Razón social": client.get("nombre_razon_social", ""),
+                "CUIT / CUIL": client.get("cuit_cuil", ""),
+                "Tipo de persona": client.get("tipo_persona", ""),
+                "Condición fiscal": client.get("regimen_principal", ""),
+                "Estado": client.get("estado", ""),
+                "Actividad / rubro": client.get("rubro") or client.get("actividad", ""),
+                "Fecha de alta": client.get("fecha_alta_estudio", ""),
+                "Observaciones": client.get("observaciones", ""),
+                "Fecha de exportación": date.today(),
+            },
+            "Datos Cliente": client,
+        }
+        sheets: dict[str, pd.DataFrame] = {
+            name: pd.DataFrame(
+                [{"Campo": key, "Valor": value} for key, value in values.items()]
+            )
+            for name, values in profiles.items()
+        }
+        queries = {
+            "Monotributo": "SELECT * FROM monotributo_cliente WHERE cliente_id=?",
+            "IIBB": "SELECT * FROM ingresos_brutos_cliente WHERE cliente_id=?",
+            "IIBB Mensual": "SELECT * FROM iibb_monotributo WHERE cliente_id=? ORDER BY periodo DESC",
+            "Ventas": "SELECT * FROM comprobantes_ventas WHERE cliente_id=? ORDER BY fecha DESC",
+            "Compras": "SELECT * FROM comprobantes_compras WHERE cliente_id=? ORDER BY fecha DESC",
+            "Alertas": "SELECT * FROM alertas_fiscales WHERE cliente_id=? ORDER BY fecha_creacion DESC",
+            "Documentación": "SELECT * FROM documentacion WHERE cliente_id=? ORDER BY id DESC",
+            "Tareas": "SELECT * FROM tareas WHERE cliente_id=? ORDER BY id DESC",
+            "Vencimientos": "SELECT * FROM vencimientos WHERE cliente_id=? ORDER BY fecha_vencimiento",
+            "Honorarios": "SELECT * FROM honorarios WHERE cliente_id=? ORDER BY id DESC",
+            "Historial importaciones": "SELECT * FROM importaciones_archivos WHERE cliente_id=? ORDER BY fecha_importacion DESC",
+        }
+        for sheet_name, sql in queries.items():
+            rows = records(sql)
+            sheets[sheet_name] = (
+                pd.DataFrame(rows)
+                if rows
+                else pd.DataFrame([{"Estado": "Sin información cargada"}])
+            )
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with pd.ExcelWriter(destination, engine="openpyxl") as writer:
+            for sheet_name, dataframe in sheets.items():
+                prepared = self._prepare_excel_dates(dataframe)
+                prepared.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+        workbook = load_workbook(destination)
+        header_fill = PatternFill("solid", fgColor="1F4E78")
+        for sheet in workbook.worksheets:
+            sheet.sheet_view.showGridLines = False
+            sheet.freeze_panes = "A2"
+            sheet.auto_filter.ref = sheet.dimensions
+            for cell in sheet[1]:
+                cell.fill = header_fill
+                cell.font = Font(color="FFFFFF", bold=True)
+            for column in sheet.columns:
+                width = min(max(len(str(cell.value or "")) for cell in column) + 2, 45)
+                sheet.column_dimensions[column[0].column_letter].width = max(width, 12)
+            headers = {cell.value: cell.column for cell in sheet[1]}
+            for header, column_index in headers.items():
+                normalized = str(header).casefold().translate(
+                    str.maketrans("áéíóúñ", "aeioun")
+                )
+                if "periodo" in normalized:
+                    number_format = "mm-yyyy"
+                elif normalized.startswith("fecha") or normalized.endswith("_en"):
+                    number_format = "dd-mm-yyyy"
+                else:
+                    continue
+                for row_index in range(2, sheet.max_row + 1):
+                    sheet.cell(row=row_index, column=column_index).number_format = number_format
+        workbook.save(destination)
+        return destination
+
+    def supplier_matrix(self, client_id: int, year: int) -> pd.DataFrame:
+        rows = self.database.query(
+            """
+            SELECT contraparte_nombre AS proveedor,
+                   CAST(substr(periodo_fiscal, 6, 2) AS INTEGER) AS mes,
+                   SUM(importe_neto_fiscal) AS importe
+            FROM comprobantes_compras
+            WHERE cliente_id = ? AND periodo_fiscal LIKE ?
+            GROUP BY contraparte_nombre, substr(periodo_fiscal, 6, 2)
+            ORDER BY contraparte_nombre COLLATE NOCASE
+            """,
+            (client_id, f"{int(year):04d}-%"),
+        )
+        if not rows:
+            raise ValueError("No hay compras de proveedores para el año seleccionado.")
+        months = (
+            "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+        )
+        providers: dict[str, list[float]] = {}
+        for row in rows:
+            provider = str(row["proveedor"] or "SIN PROVEEDOR")
+            providers.setdefault(provider, [0.0] * 12)
+            month = int(row["mes"] or 0)
+            if 1 <= month <= 12:
+                providers[provider][month - 1] += float(row["importe"] or 0)
+        data = []
+        for provider, values in providers.items():
+            item = {"Proveedor": provider}
+            item.update({month: round(values[index], 2) for index, month in enumerate(months)})
+            item["Total"] = round(sum(values), 2)
+            data.append(item)
+        totals = {"Proveedor": "TOTAL"}
+        for month in months:
+            totals[month] = round(sum(item[month] for item in data), 2)
+        totals["Total"] = round(sum(item["Total"] for item in data), 2)
+        data.append(totals)
+        return pd.DataFrame(data, columns=("Proveedor", *months, "Total"))
+
+    def export_supplier_matrix(
+        self, destination: Path, client_id: int, year: int
+    ) -> Path:
+        dataframe = self.supplier_matrix(client_id, year)
+        currency = '"$"#,##0.00;[Red]-"$"#,##0.00'
+        formats = {
+            column: currency for column in dataframe.columns if column != "Proveedor"
+        }
+        self._write_dataframe(
+            destination, dataframe, f"Proveedores {int(year)}", formats
+        )
+        workbook = load_workbook(destination)
+        sheet = workbook[f"Proveedores {int(year)}"]
+        for cell in sheet[sheet.max_row]:
+            cell.fill = PatternFill("solid", fgColor="D9EAF7")
+            cell.font = Font(bold=True, color="17324D")
+            cell.border = Border(top=Side(style="medium", color="1F4E78"))
+        sheet.freeze_panes = "B2"
         workbook.save(destination)
         return destination
 

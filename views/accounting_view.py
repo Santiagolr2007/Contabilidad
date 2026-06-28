@@ -6,7 +6,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from models import Voucher
-from utils.formatters import money
+from utils.formatters import display_date, money
 from utils.validators import positive_number
 from .date_widgets import DateEntry
 from .common import ScrollableFrame, fit_window, make_tree_sortable
@@ -219,7 +219,7 @@ class VouchersPanel(ttk.Frame):
                 "end",
                 iid=str(row["id"]),
                 values=(
-                    row["fecha"],
+                    display_date(row["fecha"]),
                     row["tipo_comprobante"],
                     row["punto_venta"],
                     row["numero_comprobante"],
@@ -286,9 +286,9 @@ class VouchersPanel(ttk.Frame):
         for row in self.app.voucher_service.monthly_summary(self.kind,client_id):
             self.summary_tree.insert("","end",values=(row["periodo"],money(row["facturas"]),money(row["notas_credito"]),money(row["notas_debito"]),row["anulados"],money(row["total_neto"]),row["cantidad"]))
         for row in self.app.voucher_service.noteworthy(self.kind,client_id):
-            self.significant_tree.insert("","end",values=(row["fecha"],row["tipo_comprobante"],row["contraparte_nombre"],row["contraparte_documento"],row["moneda"],money(row["importe_pesos"]),row["motivo_alerta"]))
+            self.significant_tree.insert("","end",values=(display_date(row["fecha"]),row["tipo_comprobante"],row["contraparte_nombre"],row["contraparte_documento"],row["moneda"],money(row["importe_pesos"]),row["motivo_alerta"]))
         for row in self.app.voucher_service.noteworthy(self.kind,client_id,True):
-            self.foreign_tree.insert("","end",values=(row["fecha"],row["tipo_comprobante"],row["contraparte_nombre"],row["moneda"],money(row["importe_original"]),row["tipo_cambio"],money(row["importe_pesos"]),row["estado"]))
+            self.foreign_tree.insert("","end",values=(display_date(row["fecha"]),row["tipo_comprobante"],row["contraparte_nombre"],row["moneda"],money(row["importe_original"]),row["tipo_cambio"],money(row["importe_pesos"]),row["estado"]))
         for row in self.app.voucher_service.ranking(self.kind,client_id):
             self.ranking_tree.insert("","end",values=(row["puesto"],row["contraparte_nombre"],row["contraparte_documento"],money(row["total"]),row["cantidad"],f"{row['porcentaje']*100:.1f}%"))
 

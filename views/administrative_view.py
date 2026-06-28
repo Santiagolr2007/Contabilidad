@@ -82,7 +82,7 @@ class AdministrativeView(ttk.Frame):
                 text="Ver tareas",
                 command=lambda: app.show_view("tareas"),
             ).pack(side="left", padx=8)
-        if module in ("tareas", "honorarios"):
+        if module in ("tareas", "vencimientos", "honorarios"):
             ttk.Button(toolbar, text="Modificar", command=self.edit).pack(
                 side="left", padx=(8, 0)
             )
@@ -102,7 +102,7 @@ class AdministrativeView(ttk.Frame):
         xscroll.grid(row=1, column=0, sticky="ew")
         table.rowconfigure(0, weight=1)
         table.columnconfigure(0, weight=1)
-        if module in ("tareas", "honorarios"):
+        if module in ("tareas", "vencimientos", "honorarios"):
             self.tree.bind("<Double-1>", lambda _event: self.edit())
         self.refresh()
 
@@ -138,7 +138,12 @@ class AdministrativeView(ttk.Frame):
         if record_id is None:
             messagebox.showinfo("Seleccionar registro", "Seleccioná un registro de la tabla.")
             return
-        noun = "la tarea" if self.module == "tareas" else "el honorario"
+        nouns = {
+            "tareas": "la tarea",
+            "vencimientos": "el vencimiento",
+            "honorarios": "el honorario",
+        }
+        noun = nouns[self.module]
         if not messagebox.askyesno(
             "Confirmar eliminación",
             f"¿Está seguro que desea eliminar {noun}? Esta acción no se puede deshacer.",
