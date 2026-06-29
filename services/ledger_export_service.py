@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import tempfile
 import zipfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -87,6 +87,20 @@ class LedgerExportService:
             for section in sections:
                 rows = self.section_rows(client_id, section)
                 dataframe = pd.DataFrame(rows or [{"Estado": "Sin información cargada"}])
+                for column in dataframe.columns:
+                    name = str(column).casefold()
+                    if "periodo" in name:
+                        dataframe[column] = dataframe[column].map(lambda value: datetime.strptime(value, "%Y-%m").date() if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}", value) else value)
+                    elif name.startswith("fecha") or name in ("creado_en", "actualizado_en"):
+                        def convert_date(value):
+                            if value is None or value == "": return None
+                            if isinstance(value, (date, datetime, pd.Timestamp)): return value
+                            text = str(value).strip()
+                            for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y"):
+                                try: return datetime.strptime(text, fmt)
+                                except ValueError: continue
+                            return value
+                        dataframe[column] = dataframe[column].map(convert_date)
                 dataframe.to_excel(
                     writer, sheet_name=self.section_title(section)[:31], index=False,
                     startrow=5,
@@ -97,7 +111,7 @@ class LedgerExportService:
             sheet["A1"] = "Cliente"; sheet["B1"] = client["nombre_razon_social"]
             sheet["A2"] = "CUIT / CUIL"; sheet["B2"] = client["cuit_cuil"]
             sheet["A3"] = "Fecha de exportación"; sheet["B3"] = date.today()
-            sheet["B3"].number_format = "dd-mm-yyyy"
+            sheet["B3"].number_format = "dd/mm/yyyy"
             sheet["A4"] = "Responsable interno"; sheet["B4"] = summary["responsable_interno"]
             for row in range(1, 5):
                 sheet.cell(row, 1).font = Font(bold=True, color="1F4E78")
@@ -106,6 +120,13 @@ class LedgerExportService:
             for cell in sheet[6]:
                 cell.fill = PatternFill("solid", fgColor="1F4E78")
                 cell.font = Font(color="FFFFFF", bold=True)
+            for column_index, header in enumerate(sheet[6], 1):
+                name = str(header.value or "").casefold()
+                for row_index in range(7, sheet.max_row + 1):
+                    if "periodo" in name:
+                        sheet.cell(row_index, column_index).number_format = "mm/yyyy"
+                    elif name.startswith("fecha") or name in ("creado en", "actualizado en"):
+                        sheet.cell(row_index, column_index).number_format = "dd/mm/yyyy"
             state_fills = {
                 "verde": PatternFill("solid", fgColor="C6EFCE"),
                 "amarillo": PatternFill("solid", fgColor="FFF2CC"),
@@ -157,6 +178,15 @@ class LedgerExportService:
         story = []
         summary = self.ledger.summary(client_id)
         client = summary["client"]
+
+        def pdf_value(key: str, value) -> str:
+            from utils.formatters import display_date, display_period, number_ar
+            if value is None: return ""
+            name = str(key).casefold()
+            if "periodo" in name: return display_period(str(value))
+            if name.startswith("fecha") or name in ("creado_en", "actualizado_en"): return display_date(str(value))
+            if any(term in name for term in ("importe", "saldo", "total")) and isinstance(value, (int, float)): return number_ar(value)
+            return str(value)
         story.extend([
             Paragraph("Legajo del cliente", styles["Title"]),
             Paragraph(str(client["nombre_razon_social"]), styles["Heading2"]),
@@ -165,7 +195,7 @@ class LedgerExportService:
             Paragraph(f"Condición fiscal: {str(client['regimen_principal']).replace('_', ' ').title()}", styles["Normal"]),
             Paragraph(f"Estado: {summary['estado_cliente']}", styles["Normal"]),
             Paragraph(f"Responsable interno: {summary['responsable_interno']}", styles["Normal"]),
-            Paragraph(f"Fecha de exportación: {date.today().strftime('%d-%m-%Y')}", styles["Normal"]),
+            Paragraph(f"Fecha de exportación: {date.today().strftime('%d/%m/%Y')}", styles["Normal"]),
             Spacer(1, 8 * mm),
         ])
         for index, section in enumerate(sections):
@@ -179,7 +209,7 @@ class LedgerExportService:
             if all(set(row) == {"Campo", "Valor"} for row in rows):
                 data = [[Paragraph("Campo", styles["BodyText"]), Paragraph("Valor", styles["BodyText"])]]
                 data.extend([
-                    [Paragraph(str(row["Campo"]), styles["BodyText"]), Paragraph("" if row["Valor"] is None else str(row["Valor"]), styles["BodyText"])]
+                    [Paragraph(str(row["Campo"]), styles["BodyText"]), Paragraph(pdf_value(str(row["Campo"]), row["Valor"]), styles["BodyText"])]
                     for row in rows
                 ])
                 table = Table(data, colWidths=(55 * mm, 125 * mm), repeatRows=1)
@@ -196,7 +226,7 @@ class LedgerExportService:
             for record_number, row in enumerate(rows, 1):
                 data = [[Paragraph("Campo", styles["BodyText"]), Paragraph("Valor", styles["BodyText"])]]
                 for key, value in row.items():
-                    data.append([Paragraph(str(key).replace("_", " ").title(), styles["BodyText"]), Paragraph("" if value is None else str(value), styles["BodyText"])])
+                    data.append([Paragraph(str(key).replace("_", " ").title(), styles["BodyText"]), Paragraph(pdf_value(str(key), value), styles["BodyText"])])
                 table = Table(data, colWidths=(55 * mm, 125 * mm), repeatRows=1)
                 table.setStyle(TableStyle([
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E78")),
@@ -281,7 +311,7 @@ class LedgerExportService:
         data.extend([[Paragraph(str(row.get(header, "") or ""), styles["BodyText"]) for header in headers] for row in rows])
         table = Table(data, colWidths=(52*mm, 28*mm, 34*mm, 28*mm, 24*mm, 30*mm, 20*mm, 31*mm), repeatRows=1)
         table.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1F4E78")), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.grey), ("VALIGN", (0,0), (-1,-1), "TOP"), ("FONTSIZE", (0,0), (-1,-1), 7)]))
-        story = [Paragraph("Índice Maestro de Clientes", styles["Title"]), Paragraph(f"Fecha de exportación: {date.today().strftime('%d-%m-%Y')}", styles["Normal"]), Spacer(1, 5*mm), table]
+        story = [Paragraph("Índice Maestro de Clientes", styles["Title"]), Paragraph(f"Fecha de exportación: {date.today().strftime('%d/%m/%Y')}", styles["Normal"]), Spacer(1, 5*mm), table]
         SimpleDocTemplate(str(destination), pagesize=landscape(A4), rightMargin=10*mm, leftMargin=10*mm, topMargin=12*mm, bottomMargin=12*mm).build(story)
         return destination
 

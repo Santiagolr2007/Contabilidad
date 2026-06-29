@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from database import Database
-from utils.formatters import normalize_period
+from utils.formatters import normalize_date, normalize_period
+from utils.validators import positive_number
 
 from .config_service import ConfigService
 
@@ -15,6 +16,14 @@ IIBB_REGIMES = (
     "AGIP REG SIMP",
     "AGIP REG GENERAL",
     "CONVENIO MULTILATERAL",
+)
+
+ARGENTINA_JURISDICTIONS = (
+    "Buenos Aires", "CABA", "Catamarca", "Chaco", "Chubut", "Córdoba",
+    "Corrientes", "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja",
+    "Mendoza", "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan",
+    "San Luis", "Santa Cruz", "Santa Fe", "Santiago del Estero",
+    "Tierra del Fuego", "Tucumán",
 )
 
 
@@ -63,8 +72,8 @@ class IibbService:
                 client_id,
                 regime,
                 rate,
-                data.get("fecha_alta") or None,
-                data.get("fecha_baja") or None,
+                normalize_date(data["fecha_alta"]) if data.get("fecha_alta") else None,
+                normalize_date(data["fecha_baja"]) if data.get("fecha_baja") else None,
                 data.get("estado", "activo"),
                 data.get("observaciones", ""),
                 data.get("jurisdiccion", ""),
@@ -131,7 +140,7 @@ class IibbService:
                 client_id, period, profile["regimen_principal"], base,
                 profile["alicuota"], determined, retentions, perceptions,
                 prior_balance, payable, fixed_amount, observations,
-                presentation_status, payment_status, due_date or None,
+                presentation_status, payment_status, normalize_date(due_date) if due_date else None,
             ),
         )
         return {
@@ -260,3 +269,32 @@ class IibbService:
             "SELECT * FROM iibb_convenio_jurisdicciones WHERE cliente_id=? AND periodo=? ORDER BY jurisdiccion",
             (client_id,period),
         )]
+
+    def list_jurisdictions(self, client_id: int) -> list[dict]:
+        return [dict(row) for row in self.database.query(
+            "SELECT * FROM iibb_jurisdicciones_cliente WHERE cliente_id=? ORDER BY jurisdiccion",
+            (client_id,),
+        )]
+
+    def save_jurisdiction(self, client_id: int, data: dict) -> int:
+        jurisdiction = str(data.get("jurisdiccion") or "").strip()
+        if jurisdiction not in ARGENTINA_JURISDICTIONS:
+            raise ValueError("Seleccioná una jurisdicción argentina válida.")
+        percentage = positive_number(data.get("porcentaje") or 0, "Porcentaje", True)
+        if percentage < 0 or percentage > 100:
+            raise ValueError("El porcentaje debe estar entre 0,00 y 100,00.")
+        return self.database.execute(
+            """INSERT INTO iibb_jurisdicciones_cliente(cliente_id,jurisdiccion,porcentaje,regimen,fecha_alta,estado,observaciones)
+               VALUES(?,?,?,?,?,?,?) ON CONFLICT(cliente_id,jurisdiccion) DO UPDATE SET
+               porcentaje=excluded.porcentaje,regimen=excluded.regimen,fecha_alta=excluded.fecha_alta,
+               estado=excluded.estado,observaciones=excluded.observaciones""",
+            (client_id,jurisdiction,percentage,data.get("regimen","A revisar"),data.get("fecha_alta") or None,data.get("estado","Activo"),data.get("observaciones","")),
+        )
+
+    def delete_jurisdiction(self, client_id: int, jurisdiction: str) -> int:
+        with self.database.connection() as connection:
+            return int(connection.execute("DELETE FROM iibb_jurisdicciones_cliente WHERE cliente_id=? AND jurisdiccion=?", (client_id,jurisdiction)).rowcount)
+
+    def jurisdiction_total(self, client_id: int) -> float:
+        row = self.database.query_one("SELECT COALESCE(SUM(porcentaje),0) total FROM iibb_jurisdicciones_cliente WHERE cliente_id=?", (client_id,))
+        return round(float(row["total"] or 0), 2)

@@ -5,11 +5,50 @@ from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from utils.formatters import display_date, money
+from utils.formatters import display_date, display_period, money
 
 from .common import MetricCard, ScrollableFrame, fit_window, selected_tree_id
 from .date_widgets import DateEntry
 from .theme import COLORS
+
+
+class TwoRowNotebook(ttk.Frame):
+    """Menú de secciones en dos filas para evitar pestañas comprimidas."""
+
+    def __init__(self, parent, columns: int = 10) -> None:
+        super().__init__(parent)
+        self.columns = columns
+        self.menu = ttk.Frame(self)
+        self.menu.pack(fill="x", pady=(0, 8))
+        self.pages: list[ttk.Frame] = []
+        self.buttons: list[ttk.Button] = []
+
+    def add(self, page: ttk.Frame, text: str) -> None:
+        index = len(self.pages)
+        self.pages.append(page)
+        button = ttk.Button(
+            self.menu,
+            text=text,
+            command=lambda selected=index: self.select(selected),
+        )
+        button.grid(
+            row=index // self.columns,
+            column=index % self.columns,
+            sticky="ew",
+            padx=2,
+            pady=2,
+        )
+        self.menu.columnconfigure(index % self.columns, weight=1)
+        self.buttons.append(button)
+        if index == 0:
+            self.select(0)
+
+    def select(self, index: int) -> None:
+        for page in self.pages:
+            page.pack_forget()
+        self.pages[index].pack(fill="both", expand=True)
+        for position, button in enumerate(self.buttons):
+            button.configure(style="Primary.TButton" if position == index else "TButton")
 
 
 class ClientLedgerDialog(tk.Toplevel):
@@ -29,7 +68,7 @@ class ClientLedgerDialog(tk.Toplevel):
         ttk.Label(top, text=f"CUIT {client['cuit_cuil']}", style="Subtitle.TLabel").pack(side="left", padx=12)
         ttk.Button(top, text="Exportar legajo", style="Primary.TButton", command=self.export_full).pack(side="right")
         ttk.Button(top, text="Cerrar", command=self.destroy).pack(side="right", padx=8)
-        self.notebook = ttk.Notebook(self)
+        self.notebook = TwoRowNotebook(self)
         self.notebook.pack(fill="both", expand=True, padx=14, pady=(0, 14))
         self._summary_tab()
         self._data_tab()
@@ -44,7 +83,8 @@ class ClientLedgerDialog(tk.Toplevel):
         tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="browse")
         for column in columns:
             tree.heading(column, text=column.replace("_", " ").title())
-            tree.column(column, width=widths.get(column, 130), minwidth=70)
+            anchor = "e" if any(term in column for term in ("importe", "saldo", "total")) else ("center" if any(term in column for term in ("fecha", "periodo", "estado", "vencimiento")) else "w")
+            tree.column(column, width=widths.get(column, 130), minwidth=70, anchor=anchor)
         yscroll = ttk.Scrollbar(container, orient="vertical", command=tree.yview)
         xscroll = ttk.Scrollbar(container, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
@@ -101,6 +141,8 @@ class ClientLedgerDialog(tk.Toplevel):
             )
             if row:
                 for key, value in dict(row).items():
+                    if key.startswith("fecha") or key in ("creado_en", "actualizado_en"):
+                        value = display_date(str(value or ""))
                     tree.insert(
                         "", "end", values=(key.replace("_", " ").title(), value or "")
                     )
@@ -135,7 +177,7 @@ class ClientLedgerDialog(tk.Toplevel):
             if term:
                 rows = [row for row in rows if term in str(row).casefold()]
             for row in rows:
-                tree.insert("", "end", iid=str(row["id"]), values=(row["descripcion"], row["periodo"], row["estado"], money(row["importe"]), money(row["saldo"]), display_date(row["vencimiento"]), row["responsable"]))
+                tree.insert("", "end", iid=str(row["id"]), values=(row["descripcion"], display_period(row["periodo"]), row["estado"], money(row["importe"]), money(row["saldo"]), display_date(row["vencimiento"]), row["responsable"]))
             total_importe = sum(float(row["importe"] or 0) for row in rows)
             total_saldo = sum(float(row["saldo"] or 0) for row in rows)
             if section == "pagos":
@@ -210,7 +252,7 @@ class ClientLedgerDialog(tk.Toplevel):
         ).pack(side="right")
         tree = self._tree(frame, ("fecha", "tipo", "seccion", "dato", "anterior", "nuevo", "responsable"), {"fecha": 150, "tipo": 120, "seccion": 150, "dato": 260, "anterior": 130, "nuevo": 130, "responsable": 110})
         for row in self.app.ledger_service.history(self.client_id):
-            tree.insert("", "end", values=(row["fecha"], row["tipo_cambio"], row["seccion"], row["dato_modificado"], row["estado_anterior"], row["estado_nuevo"], row["responsable"]))
+            tree.insert("", "end", values=(display_date(row["fecha"]), row["tipo_cambio"], row["seccion"], row["dato_modificado"], row["estado_anterior"], row["estado_nuevo"], row["responsable"]))
 
     def export_full(self) -> None:
         self.export_sections(None)
@@ -235,7 +277,13 @@ class LedgerRecordDialog(tk.Toplevel):
         for row, (key, label, options) in enumerate(app.ledger_service.SECTIONS[section][1]):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             var = tk.StringVar(); self.vars[key] = var
-            if key == "tipo_servicio" and options:
+            is_multi = (
+                (section == "servicio_presupuesto" and key == "tipo_servicio")
+                or (section == "obligaciones" and key == "tipo_obligacion")
+                or (section == "vencimientos_legajo" and key == "tipo")
+                or (section == "iibb_legajo" and key == "jurisdiccion")
+            )
+            if is_multi and options:
                 widget = tk.Listbox(
                     body,
                     selectmode="multiple",
@@ -290,7 +338,12 @@ class LedgerRecordDialog(tk.Toplevel):
                             if widget.get(index) in selected:
                                 widget.selection_set(index)
                     elif key in self.vars:
-                        self.vars[key].set(str(value or ""))
+                        if key.startswith("fecha") or key == "vencimiento":
+                            self.vars[key].set(display_date(str(value or "")))
+                        elif key == "periodo":
+                            self.vars[key].set(display_period(str(value or "")))
+                        else:
+                            self.vars[key].set(str(value or ""))
 
     def save(self) -> None:
         try:

@@ -9,13 +9,19 @@ def money(value: float | int | None) -> str:
     return "$ " + formatted.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def number_ar(value: float | int | None) -> str:
+    """Número argentino con miles y dos decimales, sin símbolo monetario."""
+    formatted = f"{float(value or 0):,.2f}"
+    return formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def percentage(value: float | int | None) -> str:
     return f"{float(value or 0) * 100:.1f}%"
 
 
 def parse_date(value: str) -> date:
     value = value.strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(value, fmt).date()
         except ValueError:
@@ -32,7 +38,7 @@ def display_date(value: str | None) -> str:
     if not value:
         return ""
     try:
-        return parse_date(str(value)).strftime("%d-%m-%Y")
+        return parse_date(str(value)).strftime("%d/%m/%Y")
     except ValueError:
         return str(value)
 
@@ -42,4 +48,20 @@ def normalize_period(value: str) -> str:
     try:
         return datetime.strptime(value, "%Y-%m").strftime("%Y-%m")
     except ValueError as error:
-        raise ValueError("El período debe tener formato AAAA-MM.") from error
+        try:
+            return datetime.strptime(value, "%m-%Y").strftime("%Y-%m")
+        except ValueError:
+            raise ValueError("El período debe tener formato MM/AAAA.") from error
+
+
+def display_period(value: str | None) -> str:
+    if not value:
+        return ""
+    text = str(value).strip().replace("/", "-")
+    try:
+        return datetime.strptime(text, "%Y-%m").strftime("%m/%Y")
+    except ValueError:
+        try:
+            return datetime.strptime(text, "%m-%Y").strftime("%m/%Y")
+        except ValueError:
+            return str(value)

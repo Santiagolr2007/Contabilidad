@@ -8,6 +8,7 @@ from .iibb_service import IibbService
 from .ledger_service import LedgerService
 from .ledger_export_service import LedgerExportService
 from .monotributo_service import MonotributoService
+from .platform_service import PlatformService
 from .report_service import ReportService
 from .recategorization_service import RecategorizationService
 from .voucher_service import VoucherService
@@ -23,6 +24,7 @@ __all__ = [
     "LedgerService",
     "LedgerExportService",
     "MonotributoService",
+    "PlatformService",
     "ReportService",
     "RecategorizationService",
     "VoucherService",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 import re
+import os
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -39,6 +40,7 @@ class ReportsView(ttk.Frame):
         self.client = tk.StringVar(value="Todos")
         self.date_from = tk.StringVar()
         self.date_to = tk.StringVar()
+        self.platform_filter = tk.StringVar()
         ttk.Label(box, text="Reporte").grid(row=0, column=0, sticky="w", pady=6)
         ttk.Combobox(
             box,
@@ -59,8 +61,11 @@ class ReportsView(ttk.Frame):
         DateEntry(box, self.date_from).grid(row=2, column=1, sticky="ew", padx=10)
         ttk.Label(box, text="Hasta").grid(row=3, column=0, sticky="w", pady=6)
         DateEntry(box, self.date_to).grid(row=3, column=1, sticky="ew", padx=10)
+        ttk.Label(box, text="Tipo / contraparte").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Entry(box, textvariable=self.platform_filter).grid(row=4, column=1, sticky="ew", padx=10)
+        ttk.Label(box, text="Filtro opcional para Mercado Pago o Mercado Libre", style="Subtitle.TLabel").grid(row=4, column=2, sticky="w")
         actions = ttk.Frame(box)
-        actions.grid(row=4, column=1, sticky="e", pady=12)
+        actions.grid(row=5, column=1, sticky="e", pady=12)
         ttk.Button(
             actions,
             text="Ver / editar últimos 12 meses",
@@ -72,6 +77,8 @@ class ReportsView(ttk.Frame):
             style="Primary.TButton",
             command=self.export,
         ).pack(side="left")
+        ttk.Button(actions, text="Exportar a PDF", command=lambda: self.export_pdf(False)).pack(side="left", padx=8)
+        ttk.Button(actions, text="Imprimir", command=lambda: self.export_pdf(True)).pack(side="left")
         box.columnconfigure(1, weight=1)
 
     def _selected_client_id(self) -> int | None:
@@ -126,8 +133,30 @@ class ReportsView(ttk.Frame):
                 self._selected_client_id(),
                 date_from,
                 date_to,
+                self.platform_filter.get().strip(),
             )
             messagebox.showinfo("Reporte creado", f"Se creó:\n{filename}")
+        except Exception as error:
+            messagebox.showerror("No se pudo exportar", str(error))
+
+    def export_pdf(self, print_after: bool = False) -> None:
+        filename = filedialog.asksaveasfilename(
+            parent=self, defaultextension=".pdf", filetypes=(("PDF", "*.pdf"),),
+            initialfile=self._safe_filename(self.report.get()) + ".pdf",
+        )
+        if not filename: return
+        try:
+            date_from, date_to = self._date_range()
+            self.app.report_service.export_named_pdf(
+                self.report_map[self.report.get()], Path(filename),
+                self._selected_client_id(), date_from, date_to,
+                self.platform_filter.get().strip(),
+            )
+            if print_after:
+                try: os.startfile(filename, "print")
+                except OSError: messagebox.showinfo("PDF listo", f"Abrí e imprimí:\n{filename}")
+            else:
+                messagebox.showinfo("Reporte creado", f"Se creó:\n{filename}")
         except Exception as error:
             messagebox.showerror("No se pudo exportar", str(error))
 

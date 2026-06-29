@@ -6,10 +6,11 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from models import Voucher
-from utils.formatters import display_date, money
+from utils.formatters import display_date, display_period, money
 from utils.validators import positive_number
 from .date_widgets import DateEntry
 from .common import ScrollableFrame, fit_window, make_tree_sortable
+from .platform_view import MercadoLibrePanel, MercadoPagoPanel
 
 
 class AccountingView(ttk.Frame):
@@ -29,6 +30,8 @@ class AccountingView(ttk.Frame):
         notebook.pack(fill="both", expand=True)
         notebook.add(VouchersPanel(notebook, app, "ventas"), text="Ventas")
         notebook.add(VouchersPanel(notebook, app, "compras"), text="Compras")
+        notebook.add(MercadoPagoPanel(notebook, app), text="Mercado Pago")
+        notebook.add(MercadoLibrePanel(notebook, app), text="Mercado Libre")
 
 
 class VouchersPanel(ttk.Frame):
@@ -127,7 +130,8 @@ class VouchersPanel(ttk.Frame):
         )
         for column, title, width in settings:
             self.tree.heading(column, text=title)
-            self.tree.column(column, width=width)
+            anchor = "e" if column in ("cambio","original","pesos","signo","neto") else ("center" if column in ("fecha","periodo","estado","moneda","pv","numero") else "w")
+            self.tree.column(column, width=width, anchor=anchor)
         yscroll=ttk.Scrollbar(detail_frame,orient="vertical",command=self.tree.yview); xscroll=ttk.Scrollbar(detail_frame,orient="horizontal",command=self.tree.xview)
         self.tree.configure(yscrollcommand=yscroll.set,xscrollcommand=xscroll.set)
         self.tree.grid(row=0,column=0,sticky="nsew");yscroll.grid(row=0,column=1,sticky="ns");xscroll.grid(row=1,column=0,sticky="ew");detail_frame.rowconfigure(0,weight=1);detail_frame.columnconfigure(0,weight=1)
@@ -180,7 +184,8 @@ class VouchersPanel(ttk.Frame):
         tree = ttk.Treeview(table, columns=columns, show="headings")
         for column in columns:
             tree.heading(column, text=column.replace("_", " ").title())
-            tree.column(column, width=130)
+            numeric = {"facturas","nc","nd","anulados","neto","cantidad","importe","original","cambio","pesos","total","porcentaje"}
+            tree.column(column, width=130, anchor="e" if column in numeric else ("center" if column in ("fecha","periodo","estado") else "w"))
         yscroll = ttk.Scrollbar(table, orient="vertical", command=tree.yview)
         xscroll = ttk.Scrollbar(table, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
@@ -234,7 +239,7 @@ class VouchersPanel(ttk.Frame):
                     money(row["importe_neto_fiscal"]),
                     row["estado"].title(),
                     row["origen"],
-                    row["periodo_fiscal"],
+                    display_period(row["periodo_fiscal"]),
                     row.get("nombre_archivo_origen", ""),
                     row["observaciones"],
                 ),
@@ -284,7 +289,7 @@ class VouchersPanel(ttk.Frame):
             for item in tree.get_children():tree.delete(item)
         if client_id is None:return
         for row in self.app.voucher_service.monthly_summary(self.kind,client_id):
-            self.summary_tree.insert("","end",values=(row["periodo"],money(row["facturas"]),money(row["notas_credito"]),money(row["notas_debito"]),row["anulados"],money(row["total_neto"]),row["cantidad"]))
+            self.summary_tree.insert("","end",values=(display_period(row["periodo"]),money(row["facturas"]),money(row["notas_credito"]),money(row["notas_debito"]),row["anulados"],money(row["total_neto"]),row["cantidad"]))
         for row in self.app.voucher_service.noteworthy(self.kind,client_id):
             self.significant_tree.insert("","end",values=(display_date(row["fecha"]),row["tipo_comprobante"],row["contraparte_nombre"],row["contraparte_documento"],row["moneda"],money(row["importe_pesos"]),row["motivo_alerta"]))
         for row in self.app.voucher_service.noteworthy(self.kind,client_id,True):
@@ -560,7 +565,7 @@ class VoucherForm(tk.Toplevel):
         today = date.today()
         self.vars["client"].set(next(iter(self.client_map)))
         self.vars["date"].set(today.strftime("%d/%m/%Y"))
-        self.vars["period"].set(today.strftime("%Y-%m"))
+        self.vars["period"].set(today.strftime("%m/%Y"))
         self.vars["type"].set("Factura C" if kind == "ventas" else "Factura A")
         self.vars["currency"].set("ARS")
         self.vars["rate"].set("1")

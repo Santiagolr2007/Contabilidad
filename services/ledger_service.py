@@ -40,7 +40,7 @@ class LedgerService:
             field("estado_presupuesto", "Estado presupuesto", ("Borrador", "Enviado", "Aceptado", "Rechazado", "Vencido", "Reemplazado", "Cancelado")), field("fecha_aceptacion", "Fecha de aceptación"), field("medio_aceptacion", "Medio de aceptación", ("WhatsApp", "Email", "Firma presencial", "Firma digital", "Verbal", "Otro")), field("observaciones", "Observaciones"),
         )),
         "pagos": ("Pagos del Cliente", (
-            field("fecha_emision", "Fecha de emisión"), field("periodo", "Período MM-AAAA"),
+            field("fecha_emision", "Fecha de emisión"), field("periodo", "Período MM/AAAA"),
             field("concepto", "Concepto", ("Abono mensual", "Alta inicial", "Liquidación impositiva", "Monotributo", "IVA", "Ganancias", "IIBB", "Convenio Multilateral", "Autónomos", "Sueldos", "Casas particulares", "Presentación anual", "Bienes personales", "Regularización", "Plan de pagos", "Trámite puntual", "Consulta", "Otro")), field("importe_facturado", "Importe facturado"),
             field("importe_cobrado", "Importe cobrado"), field("saldo_pendiente", "Saldo pendiente"),
             field("moneda", "Moneda", ("ARS", "USD", "Otro")), field("estado_pago", "Estado", ("Pendiente", "Pagado", "Pago parcial", "Vencido", "Bonificado", "Anulado", "No corresponde")),
@@ -49,7 +49,7 @@ class LedgerService:
             field("comprobante_emitido", "Comprobante emitido", ("Sí", "No", "Pendiente", "No corresponde")), field("tipo_comprobante", "Tipo de comprobante", ("Factura A", "Factura B", "Factura C", "Recibo", "Nota de crédito", "Comprobante interno", "No corresponde")), field("numero_comprobante", "Número de comprobante"), field("observaciones", "Observaciones"),
         )),
         "obligaciones": ("Valores Mensuales", (
-            field("periodo", "Período MM-AAAA"), field("tipo_obligacion", "Tipo de obligación", ("Monotributo", "Régimen Simplificado IIBB", "Autónomos", "IVA", "Ganancias", "IIBB Local", "Convenio Multilateral", "Tasa Municipal", "Empleador / F.931", "Abono del estudio", "Plan de pago", "Otro")),
+            field("periodo", "Período MM/AAAA"), field("tipo_obligacion", "Tipo de obligación", ("Monotributo", "Responsable Inscripto", "IVA", "Ganancias", "Autónomos", "Bienes Personales", "IIBB Local", "Convenio Multilateral", "Régimen Simplificado IIBB", "Tasa Municipal", "Seguridad e Higiene", "Empleador / F.931", "Casas Particulares", "Abono del estudio", "Plan de pago", "Moratoria", "Otro")),
             field("organismo", "Organismo", ("ARCA", "ARBA", "AGIP", "COMARB", "Municipio", "Ministerio de Trabajo", "Estudio", "Banco", "Otro")), field("categoria", "Categoría / encuadre"),
             field("importe_mensual", "Importe mensual"), field("moneda", "Moneda", ("ARS", "USD", "Otro")),
             field("fecha_vencimiento", "Fecha de vencimiento"), field("estado", "Estado", ("Pendiente", "Pagado", "Vencido", "No corresponde", "Bonificado", "En plan", "A revisar")),

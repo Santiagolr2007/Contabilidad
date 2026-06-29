@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from database import Database
+from utils.formatters import normalize_period
 from utils.validators import positive_number, required
 
 
@@ -57,6 +58,8 @@ class AdministrativeService:
 
     def _save(self, module: str, data: dict, record_id: int | None = None) -> int:
         self._table(module)
+        if data.get("periodo"):
+            data["periodo"] = normalize_period(data["periodo"])
         if module == "documentacion":
             values = (
                 data["cliente_id"], data["periodo"],
@@ -107,24 +110,45 @@ class AdministrativeService:
             )
 
         if module == "vencimientos":
+            if not data.get("cliente_id"):
+                raise ValueError("Debe seleccionar un cliente.")
+            period = normalize_period(data["periodo"]) if data.get("periodo") else ""
+            duplicate = self.database.query_one(
+                """SELECT id FROM vencimientos
+                   WHERE cliente_id=? AND impuesto=? AND periodo=? AND fecha_vencimiento=?
+                     AND (? IS NULL OR id<>?) LIMIT 1""",
+                (
+                    data["cliente_id"], required(data["impuesto"], "Impuesto"),
+                    period, required(data["fecha_vencimiento"], "Fecha de vencimiento"),
+                    record_id, record_id,
+                ),
+            )
+            if duplicate:
+                raise ValueError("Ya existe un vencimiento similar para este cliente.")
             values = (
-                data.get("cliente_id"), required(data["impuesto"], "Impuesto"),
-                data["periodo"], required(data["fecha_vencimiento"], "Fecha de vencimiento"),
-                data["estado"], data.get("observaciones", ""),
+                data["cliente_id"], required(data["impuesto"], "Impuesto"),
+                period, required(data["fecha_vencimiento"], "Fecha de vencimiento"),
+                data.get("organismo", ""), data.get("tipo_vencimiento", ""),
+                data["estado"], data.get("responsable") or "NATALIA",
+                data.get("observaciones", ""),
             )
             if record_id:
                 self.database.execute(
                     """UPDATE vencimientos SET cliente_id=?, impuesto=?, periodo=?,
-                       fecha_vencimiento=?, estado=?, observaciones=? WHERE id=?""",
+                       fecha_vencimiento=?, organismo=?, tipo_vencimiento=?, estado=?,
+                       responsable=?, observaciones=? WHERE id=?""",
                     (*values, record_id),
                 )
                 return record_id
             return self.database.execute(
                 """INSERT INTO vencimientos(cliente_id, impuesto, periodo,
-                   fecha_vencimiento, estado, observaciones) VALUES (?, ?, ?, ?, ?, ?)""",
+                   fecha_vencimiento, organismo, tipo_vencimiento, estado,
+                   responsable, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 values,
             )
 
+        if not data.get("cliente_id"):
+            raise ValueError("Debe seleccionar un cliente.")
         amount = positive_number(data["importe"], "Importe")
         pending = positive_number(
             data.get("saldo_pendiente") or amount,
@@ -133,9 +157,17 @@ class AdministrativeService:
         )
         if pending > amount:
             raise ValueError("El saldo pendiente no puede superar el importe total.")
+        period = normalize_period(data["periodo"]) if data.get("periodo") else ""
+        duplicate = self.database.query_one(
+            """SELECT id FROM honorarios WHERE cliente_id=? AND servicio=? AND periodo=?
+               AND (? IS NULL OR id<>?) LIMIT 1""",
+            (data["cliente_id"], required(data["servicio"], "Servicio"), period, record_id, record_id),
+        )
+        if duplicate:
+            raise ValueError("Ya existe un honorario similar para este cliente.")
         values = (
             data["cliente_id"], required(data["servicio"], "Servicio"),
-            data["periodo"], amount, data["estado"],
+            period, amount, data["estado"],
             data.get("fecha_emision") or None, data.get("fecha_cobro") or None,
             data.get("medio_pago", ""), pending, data.get("observaciones", ""),
         )

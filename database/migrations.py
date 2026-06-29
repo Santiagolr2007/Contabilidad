@@ -53,6 +53,15 @@ def migrate_database(connection: sqlite3.Connection) -> None:
     _add_columns(connection, "comprobantes_compras", VOUCHER_COLUMNS)
     _add_columns(
         connection,
+        "vencimientos",
+        {
+            "organismo": "TEXT DEFAULT ''",
+            "tipo_vencimiento": "TEXT DEFAULT ''",
+            "responsable": "TEXT DEFAULT 'NATALIA'",
+        },
+    )
+    _add_columns(
+        connection,
         "iibb_monotributo",
         {
             "regimen_principal": "TEXT DEFAULT ''",
@@ -172,6 +181,112 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             ON cliente_legajo_registros(vencimiento, estado);
         CREATE INDEX IF NOT EXISTS idx_historial_cliente_fecha
             ON cliente_historial(cliente_id, fecha);
+
+        CREATE TABLE IF NOT EXISTS iibb_jurisdicciones_cliente (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            jurisdiccion TEXT NOT NULL,
+            porcentaje REAL NOT NULL DEFAULT 0,
+            regimen TEXT NOT NULL DEFAULT 'A revisar',
+            fecha_alta TEXT,
+            estado TEXT NOT NULL DEFAULT 'Activo',
+            observaciones TEXT DEFAULT '',
+            UNIQUE(cliente_id, jurisdiccion),
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS movimientos_mercado_pago (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL,
+            periodo TEXT NOT NULL,
+            descripcion TEXT DEFAULT '',
+            tipo_movimiento TEXT NOT NULL DEFAULT 'A revisar',
+            operacion TEXT DEFAULT '',
+            contraparte TEXT DEFAULT '',
+            contraparte_documento TEXT DEFAULT '',
+            medio_pago TEXT DEFAULT '',
+            id_operacion TEXT DEFAULT '',
+            id_movimiento TEXT DEFAULT '',
+            referencia TEXT DEFAULT '',
+            moneda TEXT NOT NULL DEFAULT 'ARS',
+            importe_bruto REAL NOT NULL DEFAULT 0,
+            comisiones REAL NOT NULL DEFAULT 0,
+            retenciones REAL NOT NULL DEFAULT 0,
+            percepciones REAL NOT NULL DEFAULT 0,
+            impuestos REAL NOT NULL DEFAULT 0,
+            importe_neto REAL NOT NULL DEFAULT 0,
+            saldo REAL NOT NULL DEFAULT 0,
+            ingreso_egreso TEXT NOT NULL DEFAULT 'Ingreso',
+            estado TEXT DEFAULT '',
+            clasificacion_manual TEXT DEFAULT '',
+            observaciones TEXT DEFAULT '',
+            nombre_archivo_origen TEXT DEFAULT '',
+            id_importacion INTEGER,
+            fecha_importacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_plataformas(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS operaciones_mercado_libre (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL,
+            periodo TEXT NOT NULL,
+            tipo_operacion TEXT NOT NULL DEFAULT 'Venta',
+            tipo_comprobante TEXT DEFAULT '',
+            numero_comprobante TEXT DEFAULT '',
+            estado TEXT DEFAULT '',
+            contraparte TEXT DEFAULT '',
+            contraparte_documento TEXT DEFAULT '',
+            producto TEXT DEFAULT '',
+            cantidad REAL NOT NULL DEFAULT 0,
+            precio_unitario REAL NOT NULL DEFAULT 0,
+            importe_bruto REAL NOT NULL DEFAULT 0,
+            descuentos REAL NOT NULL DEFAULT 0,
+            comisiones REAL NOT NULL DEFAULT 0,
+            envios REAL NOT NULL DEFAULT 0,
+            retenciones REAL NOT NULL DEFAULT 0,
+            percepciones REAL NOT NULL DEFAULT 0,
+            importe_neto REAL NOT NULL DEFAULT 0,
+            moneda TEXT NOT NULL DEFAULT 'ARS',
+            id_operacion TEXT DEFAULT '',
+            id_venta TEXT DEFAULT '',
+            id_publicacion TEXT DEFAULT '',
+            medio_cobro TEXT DEFAULT '',
+            observaciones TEXT DEFAULT '',
+            nombre_archivo_origen TEXT DEFAULT '',
+            id_importacion INTEGER,
+            fecha_importacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_plataformas(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS historial_importaciones_plataformas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            fuente TEXT NOT NULL,
+            nombre_archivo TEXT NOT NULL,
+            fecha_importacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            usuario TEXT NOT NULL DEFAULT 'NATALIA',
+            importados INTEGER NOT NULL DEFAULT 0,
+            duplicados INTEGER NOT NULL DEFAULT 0,
+            revisar INTEGER NOT NULL DEFAULT 0,
+            rechazados INTEGER NOT NULL DEFAULT 0,
+            periodo_detectado TEXT DEFAULT '',
+            estado TEXT NOT NULL DEFAULT 'Importado correctamente',
+            observaciones TEXT DEFAULT '',
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mp_cliente_fecha
+            ON movimientos_mercado_pago(cliente_id, fecha);
+        CREATE INDEX IF NOT EXISTS idx_mp_operacion
+            ON movimientos_mercado_pago(cliente_id, id_operacion);
+        CREATE INDEX IF NOT EXISTS idx_ml_cliente_fecha
+            ON operaciones_mercado_libre(cliente_id, fecha);
+        CREATE INDEX IF NOT EXISTS idx_ml_operacion
+            ON operaciones_mercado_libre(cliente_id, id_operacion, id_venta);
         """
     )
     _add_columns(

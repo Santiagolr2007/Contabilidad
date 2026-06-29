@@ -7,8 +7,9 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from models import Client, FiscalProfile, MonotributoProfile
-from utils.formatters import display_date, normalize_date
+from utils.formatters import display_date, normalize_date, number_ar
 from utils.validators import positive_number
+from services.iibb_service import ARGENTINA_JURISDICTIONS
 
 from .common import ScrollableFrame, fit_window, selected_tree_id
 from .date_widgets import DateEntry
@@ -106,7 +107,7 @@ class ClientsView(ttk.Frame):
         )
         for column, label, width in settings:
             self.tree.heading(column, text=label)
-            self.tree.column(column, width=width)
+            self.tree.column(column, width=width, anchor="center" if column in ("seleccionar", "cuit", "tipo", "categoria", "estado", "legajo", "pagos", "documentacion", "riesgo", "ultimo_control", "vencimiento") else "w")
         tree_y = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         tree_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=tree_y.set, xscrollcommand=tree_x.set)
@@ -558,9 +559,10 @@ class ClientForm(tk.Toplevel):
             style="Subtitle.TLabel",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 12))
         self._field(
-            frame, 1, "Jurisdicción", "iibb_jurisdiccion",
-            help_text="Provincia u organismo: por ejemplo ARBA, AGIP o Santa Fe."
-        )
+            frame, 1, "Jurisdicciones seleccionadas", "iibb_jurisdiccion",
+            help_text="Podés seleccionar varias provincias y asignar un porcentaje a cada una."
+        ).configure(state="readonly")
+        ttk.Button(frame, text="Administrar jurisdicciones y porcentajes", command=self.open_iibb_jurisdictions).grid(row=1, column=3, padx=8)
         self._combo(
             frame, 2, "Régimen de Ingresos Brutos", "iibb_regimen",
             ("Régimen simplificado", "Régimen general/local", "Convenio Multilateral",
@@ -594,6 +596,21 @@ class ClientForm(tk.Toplevel):
         self.vars["iibb_regimen"].set("Régimen simplificado")
         self.vars["iibb_alicuota"].set("0.035")
         self.vars["iibb_estado"].set("activo")
+
+    def open_iibb_jurisdictions(self) -> None:
+        if not self.client_id:
+            messagebox.showinfo(
+                "Guardar cliente",
+                "Primero confirmá el cliente. Luego podrás cargar sus jurisdicciones y porcentajes.",
+                parent=self,
+            )
+            return
+        IibbJurisdictionsDialog(self, self.app, self.client_id, self._refresh_iibb_jurisdictions)
+
+    def _refresh_iibb_jurisdictions(self) -> None:
+        if not self.client_id: return
+        rows = self.app.iibb_service.list_jurisdictions(self.client_id)
+        self.vars["iibb_jurisdiccion"].set(", ".join(row["jurisdiccion"] for row in rows))
 
     def _build_alerts(self, frame) -> None:
         ttk.Label(
@@ -647,7 +664,7 @@ class ClientForm(tk.Toplevel):
             "cuit": client.get("cuit_cuil", ""),
             "tipo_persona": client.get("tipo_persona", "persona_humana"),
             "dni": client.get("dni", ""),
-            "fecha_nacimiento": client.get("fecha_nacimiento", "") or "",
+            "fecha_nacimiento": display_date(client.get("fecha_nacimiento", "") or ""),
             "nacionalidad": client.get("nacionalidad", ""),
             "estado_civil": client.get("estado_civil", ""),
             "telefono": client.get("telefono", ""),
@@ -655,7 +672,7 @@ class ClientForm(tk.Toplevel):
             "instagram": client.get("instagram", ""),
             "domicilio": client.get("domicilio", ""),
             "rubro": client.get("rubro", client.get("actividad", "")),
-            "fecha_alta_estudio": client.get("fecha_alta_estudio", "") or "",
+            "fecha_alta_estudio": display_date(client.get("fecha_alta_estudio", "") or ""),
             "estado": client.get("estado", "activo"),
             "observaciones": client.get("observaciones", ""),
             "regimen": fiscal.get("regimen_principal", "sin_definir"),
@@ -665,16 +682,16 @@ class ClientForm(tk.Toplevel):
             "mono_actividad": mono.get("actividad_fiscal", mono.get("actividad", "Servicios")),
             "mono_codigo_actividad": mono.get("codigo_actividad", ""),
             "mono_denominacion": mono.get("denominacion", ""),
-            "mono_fecha_alta": mono.get("fecha_alta", "") or "",
-            "mono_fecha_baja": mono.get("fecha_baja_monotributo", "") or "",
+            "mono_fecha_alta": display_date(mono.get("fecha_alta", "") or ""),
+            "mono_fecha_baja": display_date(mono.get("fecha_baja_monotributo", "") or ""),
             "mono_estado": mono.get("estado", "activo"),
             "mono_observaciones": mono.get("observaciones_fiscales", ""),
             "iibb_jurisdiccion": iibb.get("jurisdiccion", ""),
             "iibb_regimen": iibb.get("regimen_principal", "Régimen simplificado"),
             "iibb_actividad": iibb.get("actividad", ""),
             "iibb_alicuota": iibb.get("alicuota", 0.035),
-            "iibb_fecha_alta": iibb.get("fecha_alta", "") or "",
-            "iibb_fecha_baja": iibb.get("fecha_baja", "") or "",
+            "iibb_fecha_alta": display_date(iibb.get("fecha_alta", "") or ""),
+            "iibb_fecha_baja": display_date(iibb.get("fecha_baja", "") or ""),
             "iibb_estado": iibb.get("estado", "activo"),
             "iibb_observaciones": iibb.get("observaciones", ""),
             "alerta_limite": alerts["monotributo_alerta_porcentaje"] * 100,
@@ -686,6 +703,7 @@ class ClientForm(tk.Toplevel):
         }
         for key, value in mapping.items():
             self.vars[key].set(value)
+        self._refresh_iibb_jurisdictions()
 
     def save(self) -> None:
         try:
@@ -790,3 +808,72 @@ class ClientForm(tk.Toplevel):
             self.destroy()
         except Exception as error:
             messagebox.showerror("No se pudo guardar", str(error), parent=self)
+
+
+class IibbJurisdictionsDialog(tk.Toplevel):
+    REGIMES = ("Local", "Convenio Multilateral", "Régimen Simplificado", "Régimen General", "Exento", "No corresponde", "A revisar")
+    STATES = ("Activo", "Pendiente de alta", "Baja", "En regularización", "A revisar", "No corresponde")
+
+    def __init__(self, parent, app, client_id: int, callback) -> None:
+        super().__init__(parent)
+        self.app, self.client_id, self.callback = app, client_id, callback
+        self.title("Jurisdicciones / Porcentaje de distribución")
+        fit_window(self, 980, 650); self.transient(parent.winfo_toplevel()); self.grab_set()
+        form = ttk.LabelFrame(self, text="Agregar o modificar jurisdicción", padding=12)
+        form.pack(fill="x", padx=12, pady=12)
+        self.vars = {key: tk.StringVar() for key in ("jurisdiccion", "porcentaje", "regimen", "fecha_alta", "estado", "observaciones")}
+        fields = (
+            ("Jurisdicción", "jurisdiccion", ARGENTINA_JURISDICTIONS),
+            ("Porcentaje", "porcentaje", None), ("Régimen", "regimen", self.REGIMES),
+            ("Fecha de alta", "fecha_alta", "date"), ("Estado", "estado", self.STATES),
+            ("Observaciones", "observaciones", None),
+        )
+        for index, (label, key, kind) in enumerate(fields):
+            row, column = divmod(index, 3); base = column * 2
+            ttk.Label(form, text=label).grid(row=row, column=base, sticky="w", padx=(0, 4), pady=4)
+            if kind == "date": widget = DateEntry(form, self.vars[key])
+            elif isinstance(kind, tuple): widget = ttk.Combobox(form, textvariable=self.vars[key], values=kind, state="readonly")
+            else: widget = ttk.Entry(form, textvariable=self.vars[key])
+            widget.grid(row=row, column=base+1, sticky="ew", padx=(0, 10), pady=4); form.columnconfigure(base+1, weight=1)
+        self.vars["regimen"].set("Convenio Multilateral"); self.vars["estado"].set("Activo"); self.vars["porcentaje"].set("0,00")
+        ttk.Button(form, text="Guardar jurisdicción", style="Primary.TButton", command=self.save).grid(row=2, column=5, sticky="e", pady=6)
+        container = ttk.Frame(self, padding=(12,0,12,12)); container.pack(fill="both", expand=True)
+        columns = ("jurisdiccion", "porcentaje", "regimen", "fecha_alta", "estado", "observaciones")
+        self.tree = ttk.Treeview(container, columns=columns, show="headings")
+        for key in columns:
+            self.tree.heading(key, text=key.replace("_", " ").title()); self.tree.column(key, width=140, anchor="center" if key in ("porcentaje", "fecha_alta", "estado") else "w")
+        y = ttk.Scrollbar(container, orient="vertical", command=self.tree.yview); self.tree.configure(yscrollcommand=y.set)
+        self.tree.grid(row=0,column=0,sticky="nsew"); y.grid(row=0,column=1,sticky="ns"); container.rowconfigure(0,weight=1); container.columnconfigure(0,weight=1)
+        footer = ttk.Frame(container); footer.grid(row=1,column=0,sticky="ew",pady=8)
+        self.total_label = ttk.Label(footer, style="Subtitle.TLabel"); self.total_label.pack(side="left")
+        ttk.Button(footer, text="Eliminar seleccionada", command=self.delete).pack(side="right")
+        ttk.Button(footer, text="Cerrar", command=self.close).pack(side="right", padx=6)
+        self.tree.bind("<Double-1>", lambda _event: self.load_selected()); self.refresh()
+
+    def refresh(self):
+        for item in self.tree.get_children(): self.tree.delete(item)
+        for row in self.app.iibb_service.list_jurisdictions(self.client_id):
+            self.tree.insert("", "end", iid=row["jurisdiccion"], values=(row["jurisdiccion"], f"{number_ar(row['porcentaje'])}%", row["regimen"], display_date(row["fecha_alta"]), row["estado"], row["observaciones"]))
+        total = self.app.iibb_service.jurisdiction_total(self.client_id)
+        warning = " · Advertencia: la suma no es 100,00 %" if abs(total - 100) > .01 else " · Distribución completa"
+        self.total_label.configure(text=f"Total: {number_ar(total)}%{warning}")
+
+    def load_selected(self):
+        selected = self.tree.selection()
+        if not selected: return
+        row = next(item for item in self.app.iibb_service.list_jurisdictions(self.client_id) if item["jurisdiccion"] == selected[0])
+        for key in self.vars: self.vars[key].set(display_date(row[key]) if key == "fecha_alta" else row.get(key, ""))
+
+    def save(self):
+        try:
+            data = {key: var.get().strip() for key,var in self.vars.items()}
+            if data["fecha_alta"]: data["fecha_alta"] = normalize_date(data["fecha_alta"])
+            self.app.iibb_service.save_jurisdiction(self.client_id, data); self.refresh(); self.callback()
+        except Exception as error: messagebox.showerror("No se pudo guardar", str(error), parent=self)
+
+    def delete(self):
+        selected = self.tree.selection()
+        if selected and messagebox.askyesno("Confirmar", "¿Eliminar la jurisdicción seleccionada?", parent=self):
+            self.app.iibb_service.delete_jurisdiction(self.client_id, selected[0]); self.refresh(); self.callback()
+
+    def close(self): self.callback(); self.destroy()

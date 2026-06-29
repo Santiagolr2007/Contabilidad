@@ -60,6 +60,6 @@ def configure_theme(root) -> None:
         font=("Segoe UI", 9, "bold"),
     )
     style.map("Primary.TButton", background=[("active", COLORS["navy_light"])])
-    style.configure("Treeview", rowheight=28, font=("Segoe UI", 9))
-    style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+    style.configure("Treeview", rowheight=28, font=("Segoe UI", 9), padding=(5, 1))
+    style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), anchor="center", padding=(6, 5))
     style.configure("TNotebook.Tab", font=("Segoe UI", 9), padding=(7, 6))

@@ -4,7 +4,7 @@ import tkinter as tk
 from datetime import date
 from tkinter import messagebox, ttk
 
-from utils.formatters import display_date, money, percentage
+from utils.formatters import display_date, display_period, money, percentage
 from utils.validators import positive_number
 
 from .common import MetricCard, ScrollableFrame, fit_window, make_tree_sortable
@@ -97,7 +97,7 @@ class MonotributoView(ttk.Frame):
     def _add_activity_tab(self, data: dict) -> None:
         scroll=ScrollableFrame(self.details,padding=16);self.details.add(scroll,text="Monotributo");frame=scroll.content
         client=data["client"]
-        items=(("Actividad fiscal",client.get("actividad_fiscal") or "—"),("Denominación",client.get("denominacion") or "—"),("Categoría actual",client.get("categoria_actual") or "—"),("Categoría sugerida",data["suggested_category"]),("Alta monotributo",client.get("fecha_alta") or "—"),("Ingresos últimos 12 meses",money(data["sales"].get("ultimos_12",0))),("Ventas año",money(data["sales"].get("anio",0))),("Compras año",money(data["purchases"].get("anio",0))),("Estado pago mensual",client.get("estado_pago_mensual") or "pendiente"),("Estado recategorización",client.get("estado_recategorizacion") or "pendiente"),("Riesgo exclusión",client.get("riesgo_exclusion") or "normal"),("Observaciones",client.get("observaciones_fiscales") or "—"))
+        items=(("Actividad fiscal",client.get("actividad_fiscal") or "—"),("Denominación",client.get("denominacion") or "—"),("Categoría actual",client.get("categoria_actual") or "—"),("Categoría sugerida",data["suggested_category"]),("Alta monotributo",display_date(client.get("fecha_alta")) or "—"),("Ingresos últimos 12 meses",money(data["sales"].get("ultimos_12",0))),("Ventas año",money(data["sales"].get("anio",0))),("Compras año",money(data["purchases"].get("anio",0))),("Estado pago mensual",client.get("estado_pago_mensual") or "pendiente"),("Estado recategorización",client.get("estado_recategorizacion") or "pendiente"),("Riesgo exclusión",client.get("riesgo_exclusion") or "normal"),("Observaciones",client.get("observaciones_fiscales") or "—"))
         for row,(label,value) in enumerate(items):
             ttk.Label(frame,text=label,font=("Segoe UI",9,"bold")).grid(row=row,column=0,sticky="w",pady=5); ttk.Label(frame,text=value).grid(row=row,column=1,sticky="w",padx=15)
         ttk.Label(frame,text="Código de actividad",font=("Segoe UI",9,"bold")).grid(row=len(items),column=0,sticky="w",pady=5)
@@ -105,22 +105,27 @@ class MonotributoView(ttk.Frame):
 
     def _add_iibb_tab(self, client_id: int) -> None:
         scroll=ScrollableFrame(self.details,padding=12);self.details.add(scroll,text="IIBB");frame=scroll.content
-        profile=self.app.iibb_service.get_profile(client_id); vars={k:tk.StringVar(value=str(v or "")) for k,v in profile.items()}
-        period=tk.StringVar(value=__import__('datetime').date.today().strftime("%Y-%m")); extras={k:tk.StringVar(value="0") for k in ("retenciones","percepciones","saldo","fijo")};extras.update({"presentacion":tk.StringVar(value="pendiente"),"pago":tk.StringVar(value="pendiente"),"vencimiento":tk.StringVar(value="")})
+        profile=self.app.iibb_service.get_profile(client_id); vars={k:tk.StringVar(value=(display_date(v) if k.startswith("fecha") else str(v or ""))) for k,v in profile.items()}
+        jurisdictions=self.app.iibb_service.list_jurisdictions(client_id); vars["jurisdiccion"].set(", ".join(row["jurisdiccion"] for row in jurisdictions))
+        period=tk.StringVar(value=__import__('datetime').date.today().strftime("%m/%Y")); extras={k:tk.StringVar(value="0") for k in ("retenciones","percepciones","saldo","fijo")};extras.update({"presentacion":tk.StringVar(value="pendiente"),"pago":tk.StringVar(value="pendiente"),"vencimiento":tk.StringVar(value="")})
         fields=(("Jurisdicción","jurisdiccion"),("Régimen", "regimen_principal"),("Actividad","actividad"),("Alícuota decimal","alicuota"),("Fecha alta","fecha_alta"),("Fecha baja","fecha_baja"),("Estado","estado"),("Observaciones","observaciones"))
         for row,(label,key) in enumerate(fields):
             ttk.Label(frame,text=label).grid(row=row,column=0,sticky="w",pady=3)
             if key=="regimen_principal": widget=ttk.Combobox(frame,textvariable=vars[key],values=("Régimen simplificado","Régimen general/local","Convenio Multilateral","ARBA - REG SIMP","ARBA REG GENERAL","AGIP REG SIMP","AGIP REG GENERAL","CONVENIO MULTILATERAL"),state="readonly")
-            else: widget=ttk.Entry(frame,textvariable=vars[key])
+            else: widget=ttk.Entry(frame,textvariable=vars[key],state="readonly" if key=="jurisdiccion" else "normal")
             widget.grid(row=row,column=1,sticky="ew",padx=8,pady=3)
         offset=len(fields)
         for index,(label,var) in enumerate((("Período",period),("Retenciones",extras["retenciones"]),("Percepciones",extras["percepciones"]),("Saldo a favor",extras["saldo"]),("Importe fijo simplificado",extras["fijo"]),("Estado presentación",extras["presentacion"]),("Estado pago",extras["pago"]),("Fecha vencimiento",extras["vencimiento"]))):
             ttk.Label(frame,text=label).grid(row=index,column=2,sticky="w",padx=(20,0),pady=3); ttk.Entry(frame,textvariable=var).grid(row=index,column=3,sticky="ew",padx=8,pady=3)
         def calculate():
             try:
-                self.app.iibb_service.save_profile(client_id,{k:v.get() for k,v in vars.items()}); result=self.app.iibb_service.calculate_and_save(client_id,period.get(),float(extras["retenciones"].get()),float(extras["percepciones"].get()),float(extras["saldo"].get()),float(extras["fijo"].get()),presentation_status=extras["presentacion"].get(),payment_status=extras["pago"].get(),due_date=extras["vencimiento"].get()); messagebox.showinfo("Ingresos Brutos",f"Base: {money(result['base'])}\nImpuesto: {money(result['determined'])}\nSaldo a pagar: {money(result['payable'])}")
+                self.app.iibb_service.save_profile(client_id,{k:v.get() for k,v in vars.items()}); result=self.app.iibb_service.calculate_and_save(client_id,period.get(),positive_number(extras["retenciones"].get(),"Retenciones",True),positive_number(extras["percepciones"].get(),"Percepciones",True),positive_number(extras["saldo"].get(),"Saldo",True),positive_number(extras["fijo"].get(),"Importe fijo",True),presentation_status=extras["presentacion"].get(),payment_status=extras["pago"].get(),due_date=extras["vencimiento"].get()); messagebox.showinfo("Ingresos Brutos",f"Base: {money(result['base'])}\nImpuesto: {money(result['determined'])}\nSaldo a pagar: {money(result['payable'])}")
             except Exception as error: messagebox.showerror("No se pudo calcular",str(error))
         ttk.Button(frame,text="Guardar y calcular",style="Primary.TButton",command=calculate).grid(row=offset,column=3,sticky="e",pady=10)
+        def manage_jurisdictions():
+            from .clients_view import IibbJurisdictionsDialog
+            IibbJurisdictionsDialog(frame,self.app,client_id,lambda:vars["jurisdiccion"].set(", ".join(row["jurisdiccion"] for row in self.app.iibb_service.list_jurisdictions(client_id))))
+        ttk.Button(frame,text="Jurisdicciones / porcentajes",command=manage_jurisdictions).grid(row=offset,column=1,sticky="w",pady=10)
         ttk.Button(frame,text="Agregar jurisdicción Convenio Multilateral",command=lambda:ConvenioDialog(frame,self.app,client_id,period.get())).grid(row=offset+1,column=3,sticky="e",pady=4); frame.columnconfigure(1,weight=1); frame.columnconfigure(3,weight=1)
 
     def _add_iibb_monthly_tab(self, client_id: int) -> None:
@@ -128,7 +133,7 @@ class MonotributoView(ttk.Frame):
         self.details.add(frame, text="Ingresos Brutos mensuales")
         controls = ttk.Frame(frame)
         controls.pack(fill="x", pady=(0, 8))
-        period = tk.StringVar(value=date.today().strftime("%Y-%m"))
+        period = tk.StringVar(value=date.today().strftime("%m/%Y"))
         retentions = tk.StringVar(value="0")
         fixed_amount = tk.StringVar(value="0")
         ttk.Label(controls, text="Período").pack(side="left")
@@ -252,7 +257,7 @@ class MonotributoView(ttk.Frame):
         scroll=ScrollableFrame(self.details,padding=14);self.details.add(scroll,text="Recateg.");frame=scroll.content
         calc=self.app.recategorization_service.calculate(client_id)
         for row,(label,key) in enumerate((("Cliente","cliente"),("Actividad fiscal","actividad_fiscal"),("Denominación","denominacion"),("Período desde","periodo_desde"),("Período hasta","periodo_hasta"),("Ventas 12 meses","ventas"),("Categoría actual","categoria_actual"),("Categoría sugerida","categoria_sugerida"),("Diferencia al tope","diferencia_tope"),("Estado","estado"))):
-            value=money(calc[key]) if key in ("ventas","diferencia_tope") else calc[key]; ttk.Label(frame,text=label,font=("Segoe UI",9,"bold")).grid(row=row,column=0,sticky="w",pady=3); ttk.Label(frame,text=value).grid(row=row,column=1,sticky="w",padx=10)
+            value=money(calc[key]) if key in ("ventas","diferencia_tope") else (display_period(calc[key]) if key.startswith("periodo") else calc[key]); ttk.Label(frame,text=label,font=("Segoe UI",9,"bold")).grid(row=row,column=0,sticky="w",pady=3); ttk.Label(frame,text=value).grid(row=row,column=1,sticky="w",padx=10)
         extras={k:tk.StringVar(value="0") for k in ("alquileres","energia","superficie","precio_unitario_maximo")}
         for index,(key,var) in enumerate(extras.items()): ttk.Label(frame,text=key.replace("_"," ").title()).grid(row=index,column=2,sticky="w",padx=(25,0)); ttk.Entry(frame,textvariable=var).grid(row=index,column=3,padx=8,pady=3)
         def save():
@@ -281,7 +286,7 @@ class MonotributoView(ttk.Frame):
             "SELECT * FROM alertas_fiscales WHERE cliente_id=? ORDER BY fecha_creacion DESC",
             (client_id,),
         ):
-            tree.insert("", "end", values=(row["periodo"], row["tipo_alerta"], row["descripcion"], row["gravedad"], row["estado"]))
+            tree.insert("", "end", values=(display_period(row["periodo"]), row["tipo_alerta"], row["descripcion"], row["gravedad"], row["estado"]))
 
     def _refresh_alerts(self, client_id: int) -> None:
         try:
@@ -321,7 +326,7 @@ class MonotributoView(ttk.Frame):
                 "",
                 "end",
                 values=(
-                    row["periodo"],
+                    display_period(row["periodo"]),
                     money(row["facturas"]),
                     money(row["notas_credito"]),
                     money(row["notas_debito"]),

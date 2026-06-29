@@ -50,6 +50,24 @@ versiones anteriores.
 - Historial automático de altas, modificaciones y eliminaciones del legajo.
 - Exportación parcial o completa a Excel/PDF y exportación masiva a ZIP.
 - Exportación del Índice Maestro visible a Excel o PDF.
+- Dashboard interactivo con categorías fiscales, alertas activas y vencimientos
+  a 7, 15 y 30 días; cada detalle abre el legajo del cliente.
+- Vencimientos con tipo múltiple, organismo, responsable, filtros y vista
+  agrupada por cliente.
+- Honorarios con selección de cliente por nombre/CUIT, filtros, agrupación y
+  control de duplicados.
+- Ingresos Brutos multijurisdicción con las 24 jurisdicciones argentinas,
+  porcentajes por jurisdicción y advertencia cuando el total no llega a 100 %.
+- Mercado Pago: importación XLSX/CSV, clasificación automática, resumen,
+  significativos, rankings y subsolapas por movimiento.
+- Mercado Libre: ventas, compras, notas de crédito, devoluciones, productos,
+  contrapartes, operaciones significativas y neteo mensual.
+- Historial y borrado controlado de importaciones de plataformas.
+- Reportes Mercado Pago y Mercado Libre en Excel, PDF e impresión.
+
+Todas las pantallas y exportaciones muestran fechas como `DD/MM/AAAA`, períodos
+como `MM/AAAA` e importes con formato argentino (`1.250.000,00`). Internamente,
+SQLite conserva fechas y períodos normalizados para poder ordenarlos correctamente.
 
 ## Legajo integral de clientes
 

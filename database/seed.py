@@ -19,6 +19,12 @@ CONFIGURACION_INICIAL = (
         "Alícuota inicial para estimar Ingresos Brutos",
     ),
     (
+        "mercado_pago_significativo",
+        "1000",
+        "numero",
+        "Importe mínimo para movimientos significativos de Mercado Pago",
+    ),
+    (
         "concentracion_porcentaje",
         "0.30",
         "decimal",

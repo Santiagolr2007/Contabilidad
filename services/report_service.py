@@ -6,9 +6,12 @@ from pathlib import Path
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Border, Font, PatternFill, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+from utils.formatters import display_date, display_period, number_ar
 
 from .voucher_service import VoucherService
+from .platform_service import PlatformService
 
 
 class ReportService:
@@ -33,11 +36,92 @@ class ReportService:
         "documentacion": "Documentación pendiente",
         "tareas": "Tareas pendientes",
         "honorarios": "Honorarios pendientes",
+        "mercado_pago": "Reporte Mercado Pago",
+        "mercado_libre": "Reporte Mercado Libre",
     }
 
     def __init__(self, vouchers: VoucherService) -> None:
         self.vouchers = vouchers
         self.database = vouchers.database
+
+    def export_table_excel(
+        self, destination: Path, title: str, rows: list[dict], filter_text: str = ""
+    ) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        dataframe = self._prepare_excel_dates(pd.DataFrame(rows or [{"Estado": "Sin información"}]))
+        with pd.ExcelWriter(destination, engine="openpyxl") as writer:
+            dataframe.to_excel(writer, index=False, sheet_name="Reporte", startrow=4)
+        workbook = load_workbook(destination)
+        sheet = workbook.active
+        sheet["A1"] = title
+        sheet["A2"] = "Fecha de exportación"; sheet["B2"] = date.today(); sheet["B2"].number_format = "dd/mm/yyyy"
+        sheet["A3"] = "Filtro aplicado"; sheet["B3"] = filter_text or "Todos"
+        sheet["D2"] = "Cantidad de registros"; sheet["E2"] = len(rows)
+        sheet.freeze_panes = "A6"; sheet.auto_filter.ref = f"A5:{sheet.cell(sheet.max_row, sheet.max_column).coordinate}"
+        for cell in sheet[5]:
+            cell.fill = PatternFill("solid", fgColor="1F4E78"); cell.font = Font(color="FFFFFF", bold=True); cell.alignment = Alignment(horizontal="center")
+        money_terms = ("importe", "saldo", "total", "comision", "retencion", "percepcion", "impuesto", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota")
+        for column_index, cell in enumerate(sheet[5], 1):
+            name = str(cell.value or "").casefold()
+            for row_index in range(6, sheet.max_row + 1):
+                target = sheet.cell(row_index, column_index)
+                if "periodo" in name:
+                    target.number_format = "mm/yyyy"; target.alignment = Alignment(horizontal="center")
+                elif "fecha" in name:
+                    target.number_format = "dd/mm/yyyy"; target.alignment = Alignment(horizontal="center")
+                elif any(term in name for term in money_terms) and isinstance(target.value, (int, float)):
+                    target.number_format = '#,##0.00'; target.alignment = Alignment(horizontal="right")
+                else:
+                    target.alignment = Alignment(horizontal="left")
+        for column in sheet.columns:
+            letter = column[0].column_letter
+            sheet.column_dimensions[letter].width = min(max(len(str(cell.value or "")) for cell in column) + 2, 42)
+        workbook.save(destination)
+        return destination
+
+    def export_table_pdf(
+        self, destination: Path, title: str, rows: list[dict], filter_text: str = ""
+    ) -> Path:
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib.units import mm
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        except ImportError as error:
+            raise RuntimeError("Instalá las dependencias con: python -m pip install -r requirements.txt") from error
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        styles = getSampleStyleSheet()
+        rows = rows or [{"Estado": "Sin información"}]
+        headers = list(rows[0])
+        if len(headers) > 12:
+            preferred = (
+                "cliente", "nombre_razon_social", "cuit_cuil", "fecha", "periodo",
+                "descripcion", "tipo_movimiento", "tipo_operacion", "impuesto",
+                "organismo", "contraparte", "producto", "importe_bruto",
+                "importe_neto", "saldo", "estado", "responsable", "observaciones",
+            )
+            selected = [key for key in preferred if key in headers]
+            headers = (selected + [key for key in headers if key not in selected])[:12]
+        money_terms = ("importe", "saldo", "total", "comision", "retencion", "percepcion", "impuesto", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota")
+
+        def formatted(key, value):
+            normalized = str(key).casefold()
+            if value is None: return ""
+            if "periodo" in normalized: return display_period(str(value))
+            if "fecha" in normalized: return display_date(str(value))
+            if any(term in normalized for term in money_terms) and isinstance(value, (int, float)): return number_ar(value)
+            return str(value)
+
+        data = [[Paragraph(str(header).replace("_", " ").title(), styles["BodyText"]) for header in headers]]
+        data.extend([[Paragraph(formatted(header, row.get(header)), styles["BodyText"]) for header in headers] for row in rows])
+        available = 277 * mm
+        widths = [available / max(len(headers), 1)] * len(headers)
+        table = Table(data, colWidths=widths, repeatRows=1)
+        table.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1F4E78")), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.HexColor("#C8D0D8")), ("VALIGN", (0,0), (-1,-1), "TOP"), ("FONTSIZE", (0,0), (-1,-1), 6.5), ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F4F7FA")])]))
+        story = [Paragraph(title, styles["Title"]), Paragraph(f"Fecha: {date.today().strftime('%d/%m/%Y')}", styles["Normal"]), Paragraph(f"Filtro: {filter_text or 'Todos'}", styles["Normal"]), Paragraph(f"Registros: {len(rows)}", styles["Normal"]), Spacer(1, 5*mm), table]
+        SimpleDocTemplate(str(destination), pagesize=landscape(A4), leftMargin=10*mm, rightMargin=10*mm, topMargin=12*mm, bottomMargin=12*mm).build(story)
+        return destination
 
     @staticmethod
     def _validate_date_range(
@@ -128,9 +212,14 @@ class ReportService:
         client_id: int | None = None,
         date_from: str | date | None = None,
         date_to: str | date | None = None,
+        platform_filter: str = "",
     ) -> Path:
         if report not in self.REPORTS:
             raise ValueError("El reporte seleccionado no existe.")
+        if report in ("mercado_pago", "mercado_libre"):
+            if not client_id:
+                raise ValueError("Seleccioná un cliente para generar este reporte.")
+            return self.export_platform_report(destination, report, client_id, date_from, date_to, platform_filter)
         if report == "ultimos_12_meses":
             if not client_id:
                 raise ValueError("Seleccioná un cliente para generar este reporte.")
@@ -255,6 +344,105 @@ class ReportService:
         dataframe = self._prepare_excel_dates(dataframe)
         return self._write_dataframe(destination, dataframe, "Reporte")
 
+    def platform_report_data(
+        self, report: str, client_id: int,
+        date_from: str | date | None = None, date_to: str | date | None = None,
+        platform_filter: str = "",
+    ) -> dict[str, list[dict]]:
+        start, end = self._validate_date_range(date_from, date_to)
+        platform = PlatformService(self.database)
+        if report == "mercado_pago":
+            detail = platform.list_mp(client_id)
+            if start: detail = [row for row in detail if row["fecha"] >= start.isoformat()]
+            if end: detail = [row for row in detail if row["fecha"] <= end.isoformat()]
+            if platform_filter:
+                term = platform_filter.casefold()
+                detail = [row for row in detail if term in " ".join((str(row.get("tipo_movimiento","")),str(row.get("ingreso_egreso","")),str(row.get("contraparte","")),str(row.get("estado","")))).casefold()]
+            return {
+                "Movimientos": detail,
+                "Resumen Mensual": platform.mp_summary(client_id),
+                "Ranking Ingresos": platform.mp_ranking(client_id, "Ingreso"),
+                "Ranking Egresos": platform.mp_ranking(client_id, "Egreso"),
+                "Significativos": [row for row in detail if abs(float(row["importe_neto"] or 0)) >= 1000],
+                "A revisar": [row for row in detail if row["tipo_movimiento"] == "A revisar"],
+            }
+        detail = platform.list_ml(client_id)
+        if start: detail = [row for row in detail if row["fecha"] >= start.isoformat()]
+        if end: detail = [row for row in detail if row["fecha"] <= end.isoformat()]
+        if platform_filter:
+            term = platform_filter.casefold()
+            detail = [row for row in detail if term in " ".join((str(row.get("tipo_operacion","")),str(row.get("contraparte","")),str(row.get("producto","")),str(row.get("estado","")))).casefold()]
+        products = {}
+        counterparts = {}
+        for row in detail:
+            product = row["producto"] or "Sin identificar"
+            products.setdefault(product, {"producto": product, "cantidad": 0.0, "importe_total": 0.0})
+            products[product]["cantidad"] += float(row["cantidad"] or 0); products[product]["importe_total"] += float(row["importe_neto"] or 0)
+            counterpart = row["contraparte"] or "Sin identificar"
+            counterparts.setdefault(counterpart, {"contraparte": counterpart, "operaciones": 0, "importe_total": 0.0})
+            counterparts[counterpart]["operaciones"] += 1; counterparts[counterpart]["importe_total"] += float(row["importe_neto"] or 0)
+        return {
+            "Operaciones": detail,
+            "Resumen Mensual": platform.ml_summary(client_id),
+            "Productos": sorted(products.values(), key=lambda item: item["importe_total"], reverse=True),
+            "Compradores": sorted(counterparts.values(), key=lambda item: item["importe_total"], reverse=True),
+            "Significativos": [row for row in detail if abs(float(row["importe_neto"] or 0)) >= 500000],
+            "A revisar": [row for row in detail if not row["id_operacion"] and not row["id_venta"] and not row["numero_comprobante"]],
+        }
+
+    def export_platform_report(
+        self, destination: Path, report: str, client_id: int,
+        date_from: str | date | None = None, date_to: str | date | None = None,
+        platform_filter: str = "",
+    ) -> Path:
+        sheets = self.platform_report_data(report, client_id, date_from, date_to, platform_filter)
+        if not any(sheets.values()):
+            raise ValueError("No hay datos para el reporte seleccionado.")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with pd.ExcelWriter(destination, engine="openpyxl") as writer:
+            for name, rows in sheets.items():
+                dataframe = self._prepare_excel_dates(pd.DataFrame(rows or [{"Estado": "Sin información"}]))
+                dataframe.to_excel(writer, sheet_name=name[:31], index=False, startrow=3)
+        workbook = load_workbook(destination)
+        client = self.database.query_one("SELECT nombre_razon_social,cuit_cuil FROM clientes WHERE id=?", (client_id,))
+        for sheet in workbook.worksheets:
+            sheet["A1"] = self.REPORTS[report]; sheet["B1"] = client["nombre_razon_social"] if client else ""
+            sheet["A2"] = "CUIT / CUIL"; sheet["B2"] = client["cuit_cuil"] if client else ""
+            sheet["D1"] = "Fecha de emisión"; sheet["E1"] = date.today(); sheet["E1"].number_format = "dd/mm/yyyy"
+            sheet.freeze_panes = "A5"; sheet.auto_filter.ref = f"A4:{sheet.cell(sheet.max_row, sheet.max_column).coordinate}"
+            for cell in sheet[4]: cell.fill = PatternFill("solid", fgColor="1F4E78"); cell.font = Font(color="FFFFFF", bold=True)
+            for column_index, header in enumerate(sheet[4], 1):
+                name = str(header.value or "").casefold()
+                for row_index in range(5, sheet.max_row + 1):
+                    cell = sheet.cell(row_index, column_index)
+                    if "periodo" in name: cell.number_format = "mm/yyyy"; cell.alignment = Alignment(horizontal="center")
+                    elif "fecha" in name: cell.number_format = "dd/mm/yyyy"; cell.alignment = Alignment(horizontal="center")
+                    elif any(term in name for term in ("importe", "saldo", "total", "comision", "retencion", "percepcion", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota")) and isinstance(cell.value, (int,float)):
+                        cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right")
+            for column in sheet.columns:
+                sheet.column_dimensions[column[0].column_letter].width = min(max(len(str(cell.value or "")) for cell in column)+2, 38)
+        workbook.save(destination)
+        return destination
+
+    def export_named_pdf(
+        self, report: str, destination: Path, client_id: int | None = None,
+        date_from: str | date | None = None, date_to: str | date | None = None,
+        platform_filter: str = "",
+    ) -> Path:
+        if report in ("mercado_pago", "mercado_libre"):
+            if not client_id: raise ValueError("Seleccioná un cliente.")
+            sheets = self.platform_report_data(report, client_id, date_from, date_to, platform_filter)
+            rows = sheets.get("Resumen Mensual", []) or sheets.get("Movimientos", []) or sheets.get("Operaciones", [])
+            return self.export_table_pdf(destination, self.REPORTS[report], rows, f"Cliente ID {client_id}")
+        # Para reportes existentes, se genera primero la misma consulta en un Excel
+        # temporal y se presenta un resumen tabular del contenido.
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            xlsx = Path(directory) / "reporte.xlsx"
+            self.export_named(report, xlsx, client_id, date_from, date_to)
+            frame = pd.read_excel(xlsx)
+        return self.export_table_pdf(destination, self.REPORTS[report], frame.to_dict("records"), "Rango seleccionado")
+
     @staticmethod
     def _last_twelve_periods(reference: date | None = None) -> list[str]:
         reference = reference or date.today()
@@ -334,7 +522,7 @@ class ReportService:
             rows.append(
                 {
                     "periodo": period,
-                    "mes": f"{month:02d}-{year}",
+                    "mes": f"{month:02d}/{year}",
                     "ventas": round(sales_total, 2),
                     "compras": round(purchases_total, 2),
                     "resultado": round(sales_total - purchases_total, 2),
@@ -406,7 +594,7 @@ class ReportService:
             dataframe,
             "Últimos 12 meses",
             {
-                "Mes y año": "mm-yyyy",
+                "Mes y año": "mm/yyyy",
                 "Ventas": currency,
                 "Compras": currency,
                 "Resultado": currency,
@@ -509,9 +697,9 @@ class ReportService:
                     str.maketrans("áéíóúñ", "aeioun")
                 )
                 if "periodo" in normalized:
-                    number_format = "mm-yyyy"
+                    number_format = "mm/yyyy"
                 elif normalized.startswith("fecha") or normalized.endswith("_en"):
-                    number_format = "dd-mm-yyyy"
+                    number_format = "dd/mm/yyyy"
                 else:
                     continue
                 for row_index in range(2, sheet.max_row + 1):
@@ -696,11 +884,11 @@ class ReportService:
                 str.maketrans("áéíóúñ", "aeioun")
             )
             if "periodo" in normalized or normalized == "mes y ano":
-                formats.setdefault(column, "mm-yyyy")
+                formats.setdefault(column, "mm/yyyy")
             elif normalized.startswith("fecha") or normalized in {
                 "creado_en", "actualizado_en"
             }:
-                formats.setdefault(column, "dd-mm-yyyy")
+                formats.setdefault(column, "dd/mm/yyyy")
         destination.parent.mkdir(parents=True, exist_ok=True)
         with pd.ExcelWriter(destination, engine="openpyxl") as writer:
             dataframe.to_excel(writer, sheet_name=sheet_name, index=False)

@@ -15,6 +15,7 @@ from services import (
     LedgerService,
     LedgerExportService,
     MonotributoService,
+    PlatformService,
     ReportService,
     RecategorizationService,
     VoucherService,
@@ -57,6 +58,7 @@ class AccountingStudioApp(tk.Tk):
         self.iibb_service = IibbService(database, self.config_service)
         self.ledger_service = LedgerService(database)
         self.ledger_export_service = LedgerExportService(database, self.ledger_service)
+        self.platform_service = PlatformService(database)
         self.recategorization_service = RecategorizationService(
             database, self.monotributo_service
         )

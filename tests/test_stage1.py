@@ -16,11 +16,13 @@ from services import (
     ClientService,
     AlertService,
     ConfigService,
+    DashboardService,
     ImportService,
     IibbService,
     LedgerExportService,
     LedgerService,
     MonotributoService,
+    PlatformService,
     ReportService,
     VoucherService,
 )
@@ -72,6 +74,10 @@ class StageOneTests(unittest.TestCase):
             "cliente_legajo_campos",
             "cliente_legajo_registros",
             "cliente_historial",
+            "iibb_jurisdicciones_cliente",
+            "movimientos_mercado_pago",
+            "operaciones_mercado_libre",
+            "historial_importaciones_plataformas",
         }
         self.assertTrue(expected.issubset(names))
 
@@ -343,7 +349,7 @@ class StageOneTests(unittest.TestCase):
             date_from="2026-05-01",
             date_to="2026-06-30",
         )
-        self.assertEqual([row["mes"] for row in custom["rows"]], ["05-2026", "06-2026"])
+        self.assertEqual([row["mes"] for row in custom["rows"]], ["05/2026", "06/2026"])
 
         output = self.path / "ultimos_12.xlsx"
         reports.export_last_twelve_months(
@@ -357,7 +363,7 @@ class StageOneTests(unittest.TestCase):
         self.assertEqual(sheet["E14"].value, 0.35)
         self.assertEqual(sheet["E14"].number_format, "0.0%")
         self.assertIsInstance(sheet["A2"].value, date)
-        self.assertEqual(sheet["A2"].number_format, "mm-yyyy")
+        self.assertEqual(sheet["A2"].number_format, "mm/yyyy")
         workbook.close()
 
         monthly_output = self.path / "ventas_rango.xlsx"
@@ -371,7 +377,7 @@ class StageOneTests(unittest.TestCase):
         workbook = load_workbook(monthly_output)
         sheet = workbook["Reporte"]
         self.assertIsInstance(sheet["A2"].value, date)
-        self.assertEqual(sheet["A2"].number_format, "mm-yyyy")
+        self.assertEqual(sheet["A2"].number_format, "mm/yyyy")
         workbook.close()
 
     def test_activity_code_and_client_alert_configuration(self) -> None:
@@ -622,6 +628,86 @@ class StageOneTests(unittest.TestCase):
         self.assertGreater(index_xlsx.stat().st_size, 1000)
         self.assertGreater(index_pdf.stat().st_size, 1000)
         self.assertEqual(ledger.delete_record(self.client_id, payment_id), 1)
+
+    def test_argentine_formats_multijurisdiction_and_dashboard_responsables(self) -> None:
+        from utils.formatters import display_date, display_period, number_ar
+
+        self.assertEqual(display_date("2026-07-01"), "01/07/2026")
+        self.assertEqual(display_period("2026-07"), "07/2026")
+        self.assertEqual(number_ar(1_250_000.5), "1.250.000,50")
+        iibb = IibbService(self.database, self.config)
+        iibb.save_jurisdiction(self.client_id, {
+            "jurisdiccion": "Buenos Aires", "porcentaje": "70,00",
+            "regimen": "Convenio Multilateral", "estado": "Activo",
+        })
+        iibb.save_jurisdiction(self.client_id, {
+            "jurisdiccion": "CABA", "porcentaje": "30,00",
+            "regimen": "Convenio Multilateral", "estado": "Activo",
+        })
+        self.assertEqual(iibb.jurisdiction_total(self.client_id), 100)
+        responsible_id = self.clients.save(
+            Client("Responsable de Prueba", "20333444559"),
+            FiscalProfile(regimen_principal="responsable_inscripto"), None,
+        )
+        dashboard = DashboardService(self.database)
+        self.assertGreaterEqual(dashboard.general_metrics()["responsables_inscriptos"], 1)
+        self.assertIn(responsible_id, {row["cliente_id"] for row in dashboard.clients_by_category("responsables")})
+
+    def test_vencimientos_require_client_multitype_and_reject_duplicates(self) -> None:
+        administrative = AdministrativeService(self.database)
+        data = {
+            "cliente_id": self.client_id,
+            "impuesto": "IVA",
+            "organismo": "ARCA",
+            "periodo": "07/2026",
+            "fecha_vencimiento": "2026-07-18",
+            "tipo_vencimiento": "Presentación, Pago",
+            "estado": "pendiente",
+            "responsable": "NATALIA",
+            "observaciones": "Control mensual",
+        }
+        record_id = administrative.create("vencimientos", data)
+        record = administrative.get("vencimientos", record_id)
+        self.assertEqual(record["periodo"], "2026-07")
+        self.assertEqual(record["tipo_vencimiento"], "Presentación, Pago")
+        with self.assertRaisesRegex(ValueError, "Ya existe un vencimiento similar"):
+            administrative.create("vencimientos", data)
+        with self.assertRaisesRegex(ValueError, "Debe seleccionar un cliente"):
+            administrative.create("vencimientos", {**data, "cliente_id": None})
+
+    def test_mercado_pago_and_mercado_libre_import_reports_and_duplicates(self) -> None:
+        service = PlatformService(self.database)
+        mp = self.path / "mercado_pago.csv"
+        mp.write_text(
+            "Fecha;Descripción;ID de operación;Contraparte;Importe bruto;Importe neto;Saldo\n"
+            "01/07/2026;Cobro por venta;MP-1;Comprador Uno;1.500,00;1.450,00;5.000,00\n"
+            "02/07/2026;Comisión por cobro;MP-2;Mercado Pago;-50,00;-50,00;4.950,00\n",
+            encoding="utf-8",
+        )
+        result = service.import_mercado_pago(mp, self.client_id)
+        self.assertEqual(result["imported"], 2)
+        self.assertEqual(service.import_mercado_pago(mp, self.client_id)["duplicates"], 2)
+        movements = service.list_mp(self.client_id, "07/2026")
+        self.assertEqual(len(movements), 2)
+        self.assertEqual(service.mp_summary(self.client_id)[0]["cantidad_movimientos"], 2)
+
+        ml = self.path / "mercado_libre.xlsx"
+        import pandas as pd
+        pd.DataFrame([
+            {"Fecha": "03/07/2026", "Tipo de operación": "Venta", "Número de comprobante": "ML-F-1", "Cliente": "Comprador Uno", "Producto": "Producto A", "Cantidad": 2, "Importe bruto": 2000, "Comisiones": 200, "Importe neto": 1800, "ID de venta": "SALE-1"},
+            {"Fecha": "04/07/2026", "Tipo de operación": "Nota de crédito", "Número de comprobante": "ML-NC-1", "Cliente": "Comprador Uno", "Producto": "Producto A", "Cantidad": 1, "Importe bruto": 500, "Importe neto": 500, "ID de venta": "SALE-2"},
+        ]).to_excel(ml, index=False)
+        result = service.import_mercado_libre(ml, self.client_id, "Ventas")
+        self.assertEqual(result["imported"], 2)
+        rows = service.list_ml(self.client_id, "07/2026")
+        self.assertEqual(next(row for row in rows if row["tipo_operacion"] == "Nota de crédito")["importe_neto"], -500)
+        report = ReportService(self.vouchers)
+        output = self.path / "reporte_ml.xlsx"
+        report.export_platform_report(output, "mercado_libre", self.client_id)
+        workbook = load_workbook(output)
+        self.assertIn("Resumen Mensual", workbook.sheetnames)
+        self.assertIn("Productos", workbook.sheetnames)
+        workbook.close()
 
     def test_arca_csv_import_and_iibb(self) -> None:
         source = self.path / "emitidos.csv"
