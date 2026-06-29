@@ -190,8 +190,9 @@ class ClientService:
                         INSERT INTO monotributo_cliente(
                             cliente_id, categoria_actual, actividad, actividad_fiscal,
                             codigo_actividad, denominacion, fecha_alta, fecha_baja_monotributo,
-                            estado, observaciones_fiscales
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            estado, observaciones_fiscales,tipo_actividad,aporta_sipa,
+                            aporta_obra_social,adherentes_obra_social,condicion_especial
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(cliente_id) DO UPDATE SET
                             categoria_actual = excluded.categoria_actual,
                             actividad = excluded.actividad,
@@ -201,7 +202,12 @@ class ClientService:
                             fecha_alta = excluded.fecha_alta,
                             fecha_baja_monotributo = excluded.fecha_baja_monotributo,
                             estado = excluded.estado,
-                            observaciones_fiscales = excluded.observaciones_fiscales
+                            observaciones_fiscales = excluded.observaciones_fiscales,
+                            tipo_actividad=excluded.tipo_actividad,
+                            aporta_sipa=excluded.aporta_sipa,
+                            aporta_obra_social=excluded.aporta_obra_social,
+                            adherentes_obra_social=excluded.adherentes_obra_social,
+                            condicion_especial=excluded.condicion_especial
                         """,
                         (
                             client_id,
@@ -214,6 +220,11 @@ class ClientService:
                             monotributo.fecha_baja or None,
                             monotributo.estado,
                             monotributo.observaciones_fiscales.strip(),
+                            monotributo.tipo_actividad,
+                            monotributo.aporta_sipa,
+                            monotributo.aporta_obra_social,
+                            int(monotributo.adherentes_obra_social or 0),
+                            monotributo.condicion_especial,
                         ),
                     )
                 connection.execute(

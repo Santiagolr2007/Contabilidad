@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import tkinter as tk
 from datetime import date
-from tkinter import messagebox, ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
 from utils.formatters import display_date, display_period, money, percentage
 from utils.validators import positive_number
@@ -43,6 +44,8 @@ class MonotributoView(ttk.Frame):
         combo.pack(side="left", padx=8)
         combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
         ttk.Button(selector, text="Actualizar", command=self.refresh).pack(side="left")
+        ttk.Button(selector, text="Importar categorías ARCA", command=self.import_categories).pack(side="left", padx=8)
+        ttk.Button(selector,text="Historial categorías",command=self.open_categories_history).pack(side="left")
 
         self.details = ttk.Notebook(self)
         self.details.pack(fill="both", expand=True)
@@ -75,12 +78,50 @@ class MonotributoView(ttk.Frame):
         self._add_activity_tab(data)
         self._add_iibb_tab(client_id)
         self._add_iibb_monthly_tab(client_id)
+        self._add_categories_tab(client_id)
         self._add_recat_tab(client_id)
         self._add_ranking_tab("Clientes", data["sales_ranking"])
         self._add_ranking_tab("Proveedores", data["purchases_ranking"])
         self._add_alerts_tab(client_id)
         self._add_documentation_tab()
         self._add_reports_tab()
+
+    def import_categories(self) -> None:
+        filename=filedialog.askopenfilename(parent=self,title="Importar categorías de Monotributo ARCA",filetypes=(("Documento PDF","*.pdf"),))
+        if not filename:return
+        try:
+            preview=self.app.monotributo_categories_service.preview_pdf(Path(filename));CategoriesImportPreviewDialog(self,self.app,preview,self.refresh)
+        except Exception as error:messagebox.showerror("No se pudo leer el PDF",str(error),parent=self)
+
+    def open_categories_history(self) -> None:
+        from .administrative_view import AccountingImportHistoryDialog
+        AccountingImportHistoryDialog(self,self.app,"ARCA Monotributo Categorías PDF")
+
+    def _add_categories_tab(self, client_id: int) -> None:
+        frame=ttk.Frame(self.details,padding=10);self.details.add(frame,text="Categorías / Límites")
+        payment=self.app.monotributo_categories_service.client_payment(client_id)
+        summary=ttk.LabelFrame(frame,text="Valor mensual del cliente",padding=8);summary.pack(fill="x",pady=(0,8))
+        text=(f"Categoría {payment['category'] or '—'} · {payment['activity'] or '—'} · "
+              f"Impuesto integrado {money(payment['integrated_tax'])} + SIPA {money(payment['sipa'])} + "
+              f"Obra social {money(payment['health'])} + adherentes {money(payment['adherents'])} = "
+              f"Total ajustado {money(payment['adjusted_total'])} · Vigencia {display_date(payment['vigencia']) or '—'} · {payment['source'] or 'sin fuente'}")
+        ttk.Label(summary,text=text,wraplength=1100).pack(anchor="w")
+        actions=ttk.Frame(frame);actions.pack(fill="x",pady=(0,5))
+        holder=ttk.Frame(frame);holder.pack(fill="both",expand=True)
+        columns=("categoria","vigencia","ingresos","superficie","energia","alquileres","precio","integrado_s","integrado_v","sipa","obra","total_s","total_v","estado","fuente")
+        tree=ttk.Treeview(holder,columns=columns,show="headings")
+        labels=("Categoría","Vigencia","Ingresos brutos","Superficie","Energía","Alquileres","Precio unitario","Imp. servicios","Imp. ventas","SIPA","Obra social","Total servicios","Total ventas","Estado","Fuente")
+        for column,label in zip(columns,labels):tree.heading(column,text=label);tree.column(column,width=105,minwidth=70)
+        self._add_tree_scrollbars(holder,tree)
+        versions=self.app.monotributo_categories_service.list_versions()
+        for row in versions:
+            tree.insert("","end",iid=str(row["id"]),values=(row["categoria"],display_date(row["vigencia_desde"]),money(row["tope_ingresos"]),row["tope_superficie"],row["tope_energia"],money(row["tope_alquileres"]),money(row["precio_unitario_maximo"]),money(row["impuesto_integrado_servicios"]),money(row["impuesto_integrado_ventas"]),money(row["aporte_sipa"]),money(row["aporte_obra_social"]),money(row["total_servicios"]),money(row["total_ventas"]),row["estado"],row["fuente"]))
+        def edit_existing():
+            selected=tree.selection()
+            if not selected:messagebox.showinfo("Seleccionar categoría","Seleccioná una categoría.",parent=self);return
+            source=next(row for row in versions if row["id"]==int(selected[0]));ExistingCategoryDialog(self,self.app,source,self.refresh)
+        ttk.Button(actions,text="Modificar categoría seleccionada",command=edit_existing).pack(side="left")
+        tree.bind("<Double-1>",lambda _event:edit_existing())
 
     def _add_summary_tab(self, data: dict) -> None:
         # El resumen es un panel fijo de tarjetas: no debe capturar la rueda ni
@@ -379,6 +420,62 @@ class MonotributoView(ttk.Frame):
         xscroll.grid(row=1, column=0, sticky="ew")
         parent.rowconfigure(0, weight=1)
         parent.columnconfigure(0, weight=1)
+
+
+class CategoriesImportPreviewDialog(tk.Toplevel):
+    def __init__(self,parent,app,preview:dict,callback) -> None:
+        super().__init__(parent);self.app=app;self.preview=preview;self.callback=callback;self.title("Vista previa de categorías Monotributo ARCA");fit_window(self,1260,700);self.transient(parent.winfo_toplevel());self.grab_set()
+        body=ttk.Frame(self,padding=14);body.pack(fill="both",expand=True);ttk.Label(body,text="Vista previa de categorías Monotributo ARCA",style="Title.TLabel").pack(anchor="w");ttk.Label(body,text=f"Vigencia detectada: {display_date(preview['vigencia'])} · Editá cualquier valor dudoso antes de confirmar.",style="Subtitle.TLabel").pack(anchor="w",pady=(2,8))
+        holder=ttk.Frame(body);holder.pack(fill="both",expand=True);columns=("accion","categoria","ingresos","superficie","energia","alquileres","precio","imp_s","imp_v","sipa","obra","total_s","total_v","confianza")
+        self.tree=ttk.Treeview(holder,columns=columns,show="headings");labels=("Acción","Cat.","Ingresos","Superficie","Energía","Alquileres","Precio","Imp. servicios","Imp. ventas","SIPA","Obra social","Total servicios","Total ventas","Confianza")
+        for c,l in zip(columns,labels):self.tree.heading(c,text=l);self.tree.column(c,width=95,minwidth=65)
+        MonotributoView._add_tree_scrollbars(holder,self.tree)
+        for index in range(len(preview["records"])):self.redraw(index)
+        controls=ttk.Frame(body);controls.pack(fill="x",pady=(9,0));ttk.Button(controls,text="Importar / no importar",command=self.toggle).pack(side="left");ttk.Button(controls,text="Editar seleccionado",command=self.edit).pack(side="left",padx=6);ttk.Button(controls,text="Cancelar",command=self.destroy).pack(side="right");ttk.Button(controls,text="Confirmar importación",style="Primary.TButton",command=self.confirm).pack(side="right",padx=6)
+
+    def redraw(self,index:int):
+        r=self.preview["records"][index];values=(r["accion"],r["categoria"],money(r["tope_ingresos"]),r["tope_superficie"],r["tope_energia"],money(r["tope_alquileres"]),money(r["precio_unitario_maximo"]),money(r["impuesto_integrado_servicios"]),money(r["impuesto_integrado_ventas"]),money(r["aporte_sipa"]),money(r["aporte_obra_social"]),money(r["total_servicios"]),money(r["total_ventas"]),r["confianza"])
+        if self.tree.exists(str(index)):self.tree.item(str(index),values=values)
+        else:self.tree.insert("","end",iid=str(index),values=values)
+    def toggle(self):
+        s=self.tree.selection()
+        if not s:return
+        i=int(s[0]);r=self.preview["records"][i];r["accion"]="No importar" if r["accion"]=="Importar" else "Importar";self.redraw(i)
+    def edit(self):
+        s=self.tree.selection()
+        if s:CategoryPreviewRowDialog(self,self.preview["records"][int(s[0])],lambda:self.redraw(int(s[0])))
+    def confirm(self):
+        existing=self.app.database.query_one("SELECT id FROM categorias_monotributo WHERE vigencia_desde=? LIMIT 1",(self.preview["vigencia"],));action="replace"
+        if existing:
+            answer=messagebox.askyesnocancel("Versión existente","Ya existe esta vigencia.\nSí: reemplazar · No: omitir duplicados · Cancelar: volver",parent=self)
+            if answer is None:return
+            action="replace" if answer else "skip"
+        try:
+            result=self.app.monotributo_categories_service.import_preview(self.preview,action);self.callback();messagebox.showinfo("Categorías importadas",f"Importadas: {result['imported']}\nDuplicadas: {result['duplicates']}\nA revisar: {result['review']}",parent=self);self.destroy()
+        except Exception as error:messagebox.showerror("No se pudo importar",str(error),parent=self)
+
+
+class CategoryPreviewRowDialog(tk.Toplevel):
+    def __init__(self,parent,row:dict,callback) -> None:
+        super().__init__(parent);self.row=row;self.callback=callback;self.title(f"Editar categoría {row['categoria']}");fit_window(self,620,650);self.transient(parent);self.grab_set();scroll=ScrollableFrame(self,padding=16);scroll.pack(fill="both",expand=True);frame=scroll.content
+        fields=(("categoria","Categoría"),("vigencia_desde","Vigencia AAAA-MM-DD"),("tope_ingresos","Ingresos brutos"),("tope_superficie","Superficie"),("tope_energia","Energía"),("tope_alquileres","Alquileres"),("precio_unitario_maximo","Precio unitario"),("impuesto_integrado_servicios","Impuesto servicios"),("impuesto_integrado_ventas","Impuesto ventas"),("aporte_sipa","SIPA"),("aporte_obra_social","Obra social"),("total_servicios","Total servicios"),("total_ventas","Total ventas"),("observaciones","Observaciones"));self.vars={}
+        for i,(k,l) in enumerate(fields):self.vars[k]=tk.StringVar(value=str(row.get(k,"")));ttk.Label(frame,text=l).grid(row=i,column=0,sticky="w",pady=3);ttk.Entry(frame,textvariable=self.vars[k]).grid(row=i,column=1,sticky="ew",padx=8,pady=3)
+        frame.columnconfigure(1,weight=1);ttk.Button(frame,text="Guardar",style="Primary.TButton",command=self.save).grid(row=len(fields),column=1,sticky="e",pady=8)
+    def save(self):
+        try:
+            for key,var in self.vars.items():self.row[key]=var.get().strip() if key in ("categoria","vigencia_desde","observaciones") else float(var.get().replace(".","").replace(",",".") or 0)
+            self.row["confianza"]="Alta";self.callback();self.destroy()
+        except Exception as error:messagebox.showerror("Dato inválido",str(error),parent=self)
+
+
+class ExistingCategoryDialog(CategoryPreviewRowDialog):
+    def __init__(self,parent,app,row:dict,callback) -> None:
+        self.app=app;self.category_id=int(row["id"]);self.external_callback=callback
+        super().__init__(parent,row,self._persist)
+        self.title(f"Modificar categoría {row['categoria']}")
+    def _persist(self) -> None:
+        self.app.monotributo_categories_service.update(self.category_id,self.row,reason="Modificación manual desde Monotributo")
+        self.external_callback()
 
 
 class ConvenioDialog(tk.Toplevel):

@@ -48,7 +48,11 @@ DEFINITIONS = {
             ("periodo", "Período MM/AAAA", "text"),
             ("fecha_vencimiento", "Fecha vencimiento", "date"),
             ("tipo_vencimiento", "Tipo de vencimiento", ("multi", "Presentación", "Pago", "Renovación", "Recategorización", "Alta", "Baja", "Modificación", "Informe", "Control", "Reunión", "Respuesta a intimación", "Vencimiento de certificado", "Vencimiento contractual", "Otro")),
-            ("estado", "Estado", ("pendiente", "presentado", "pagado", "vencido")),
+            ("estado", "Estado", ("pendiente", "presentado", "pagado", "vencido", "A revisar", "No corresponde")),
+            ("importe", "Importe", "text"),
+            ("saldo", "Saldo", "text"),
+            ("fecha_presentacion", "Fecha presentación", "date"),
+            ("fecha_pago", "Fecha pago", "date"),
             ("responsable", "Responsable", "text"),
             ("observaciones", "Observaciones", "text"),
         ),
@@ -99,6 +103,9 @@ class AdministrativeView(ttk.Frame):
             ttk.Button(toolbar, text="Exportar Excel", command=lambda: self.export("xlsx")).pack(side="left", padx=(8,0))
             ttk.Button(toolbar, text="Exportar PDF", command=lambda: self.export("pdf")).pack(side="left", padx=(5,0))
             ttk.Button(toolbar, text="Imprimir", command=lambda: self.export("pdf", True)).pack(side="left", padx=(5,0))
+        if module == "vencimientos":
+            ttk.Button(toolbar, text="Importar vencimientos ARCA", command=self.import_arca).pack(side="left", padx=(8, 0))
+            ttk.Button(toolbar, text="Historial ARCA", command=lambda: AccountingImportHistoryDialog(self, self.app, "ARCA Vencimientos")).pack(side="left", padx=(5, 0))
         ttk.Button(toolbar, text="Actualizar", command=self.refresh).pack(side="right")
 
         self.filter_state = tk.StringVar(value="Todos")
@@ -161,6 +168,19 @@ class AdministrativeView(ttk.Frame):
         if module in ("tareas", "vencimientos", "honorarios"):
             self.tree.bind("<Double-1>", lambda _event: self.edit())
         self.refresh()
+
+    def import_arca(self) -> None:
+        filename = filedialog.askopenfilename(
+            parent=self, title="Importar vencimientos ARCA",
+            filetypes=(("Excel o CSV", "*.xls *.xlsx *.csv"), ("Todos", "*.*")),
+        )
+        if not filename:
+            return
+        try:
+            preview = self.app.arca_import_service.preview_deadlines(Path(filename))
+            DeadlineImportPreviewDialog(self, self.app, preview, self.refresh)
+        except Exception as error:
+            messagebox.showerror("No se pudo leer el archivo", str(error), parent=self)
 
     def refresh(self) -> None:
         rows = self.app.administrative_service.list(self.module)
@@ -293,6 +313,100 @@ class AdministrativeView(ttk.Frame):
                 )
         except Exception as error:
             messagebox.showerror("No se pudo eliminar", str(error), parent=self)
+
+
+class DeadlineImportPreviewDialog(tk.Toplevel):
+    def __init__(self, parent, app, preview: dict, callback) -> None:
+        super().__init__(parent)
+        self.app = app; self.preview = preview; self.callback = callback
+        self.title("Vista previa de vencimientos ARCA importados")
+        fit_window(self, 1220, 700); self.transient(parent.winfo_toplevel()); self.grab_set()
+        body = ttk.Frame(self, padding=14); body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Vista previa de vencimientos ARCA", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text=f"Hoja: {preview['sheet']} · encabezado: fila {preview['header_row']} · detectados: {len(preview['records'])} · errores: {len(preview['errors'])}", style="Subtitle.TLabel").pack(anchor="w", pady=(2, 8))
+        frame=ttk.Frame(body); frame.pack(fill="both",expand=True)
+        columns=("accion","cliente","cuit","impuesto","organismo","periodo","vencimiento","tipo","estado","importe","confianza")
+        self.tree=ttk.Treeview(frame,columns=columns,show="headings",selectmode="browse")
+        labels=("Acción","Cliente","CUIT","Impuesto / obligación","Organismo","Período","Vencimiento","Tipo","Estado","Importe","Confianza")
+        widths=(85,170,100,210,80,80,95,150,90,100,90)
+        for column,label,width in zip(columns,labels,widths): self.tree.heading(column,text=label);self.tree.column(column,width=width,minwidth=60)
+        sy=ttk.Scrollbar(frame,orient="vertical",command=self.tree.yview);sx=ttk.Scrollbar(frame,orient="horizontal",command=self.tree.xview);self.tree.configure(yscrollcommand=sy.set,xscrollcommand=sx.set)
+        self.tree.grid(row=0,column=0,sticky="nsew");sy.grid(row=0,column=1,sticky="ns");sx.grid(row=1,column=0,sticky="ew");frame.rowconfigure(0,weight=1);frame.columnconfigure(0,weight=1)
+        for index,row in enumerate(preview["records"]):
+            self.tree.insert("","end",iid=str(index),values=(row["accion"],row["cliente"] or "Cliente no encontrado",row["cuit"],row["impuesto"],row["organismo"],display_period(row["periodo"]),display_date(row["fecha_vencimiento"]),row["tipo_vencimiento"],row["estado"],money(row["importe"]),row["confianza"]))
+        actions=ttk.Frame(body);actions.pack(fill="x",pady=(10,0))
+        ttk.Button(actions,text="Alternar importar / no importar",command=self.toggle).pack(side="left")
+        ttk.Button(actions,text="Editar seleccionado",command=self.edit).pack(side="left",padx=6)
+        ttk.Button(actions,text="Cancelar",command=self.destroy).pack(side="right")
+        ttk.Button(actions,text="Confirmar importación",style="Primary.TButton",command=self.confirm).pack(side="right",padx=6)
+
+    def selected(self) -> dict | None:
+        selection=self.tree.selection(); return self.preview["records"][int(selection[0])] if selection else None
+
+    def redraw(self, index: int) -> None:
+        row=self.preview["records"][index]
+        self.tree.item(str(index),values=(row["accion"],row["cliente"] or "Cliente no encontrado",row["cuit"],row["impuesto"],row["organismo"],display_period(row["periodo"]),display_date(row["fecha_vencimiento"]),row["tipo_vencimiento"],row["estado"],money(row["importe"]),row["confianza"]))
+
+    def toggle(self) -> None:
+        selection=self.tree.selection()
+        if not selection:return
+        index=int(selection[0]);row=self.preview["records"][index];row["accion"]="No importar" if row["accion"]=="Importar" else "Importar";self.redraw(index)
+
+    def edit(self) -> None:
+        selection=self.tree.selection()
+        if not selection:return
+        index=int(selection[0]); DeadlineRowDialog(self,self.app,self.preview["records"][index],lambda:self.redraw(index))
+
+    def confirm(self) -> None:
+        action=messagebox.askyesnocancel("Duplicados","¿Reemplazar vencimientos duplicados?\nSí: reemplazar · No: omitir · Cancelar: volver",parent=self)
+        if action is None:return
+        try:
+            result=self.app.arca_import_service.import_deadlines(self.preview,"replace" if action else "skip")
+            self.callback();messagebox.showinfo("Importación terminada",f"Importados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nCon error: {result['rejected']}",parent=self);self.destroy()
+        except Exception as error:messagebox.showerror("No se pudo importar",str(error),parent=self)
+
+
+class DeadlineRowDialog(tk.Toplevel):
+    def __init__(self,parent,app,row:dict,callback) -> None:
+        super().__init__(parent);self.app=app;self.row=row;self.callback=callback;self.title("Editar vencimiento antes de importar");fit_window(self,650,620);self.transient(parent);self.grab_set()
+        body=ScrollableFrame(self,padding=16);body.pack(fill="both",expand=True);frame=body.content
+        clients=app.client_service.list_clients(include_inactive=True);self.clients={f"{item['nombre_razon_social']} · {item['cuit_cuil']}":item["id"] for item in clients}
+        selected=next((label for label,value in self.clients.items() if value==row.get("client_id")),next(iter(self.clients),""));self.vars={"cliente":tk.StringVar(value=selected)}
+        fields=(("cliente","Cliente"),("impuesto","Impuesto"),("organismo","Organismo"),("periodo","Período AAAA-MM"),("fecha_vencimiento","Fecha AAAA-MM-DD"),("tipo_vencimiento","Tipo"),("estado","Estado"),("importe","Importe"),("saldo","Saldo"),("observaciones","Observaciones"))
+        for i,(key,label) in enumerate(fields):
+            ttk.Label(frame,text=label).grid(row=i,column=0,sticky="w",pady=4)
+            if key=="cliente": widget=ttk.Combobox(frame,textvariable=self.vars[key],values=tuple(self.clients),state="readonly")
+            else:self.vars[key]=tk.StringVar(value=str(row.get(key,"")));widget=ttk.Entry(frame,textvariable=self.vars[key])
+            widget.grid(row=i,column=1,sticky="ew",padx=8,pady=4)
+        frame.columnconfigure(1,weight=1);ttk.Button(frame,text="Guardar cambios",style="Primary.TButton",command=self.save).grid(row=len(fields),column=1,sticky="e",pady=10)
+
+    def save(self):
+        try:
+            label=self.vars["cliente"].get();self.row["client_id"]=self.clients.get(label);self.row["cliente"]=label.split(" · ")[0] if label else ""
+            for key in ("impuesto","organismo","periodo","fecha_vencimiento","tipo_vencimiento","estado","observaciones"):self.row[key]=self.vars[key].get().strip()
+            self.row["importe"]=float(self.vars["importe"].get().replace(".","").replace(",",".") or 0);self.row["saldo"]=float(self.vars["saldo"].get().replace(".","").replace(",",".") or 0);self.row["confianza"]="Alta" if self.row["client_id"] else "A revisar";self.callback();self.destroy()
+        except Exception as error:messagebox.showerror("Dato inválido",str(error),parent=self)
+
+
+class AccountingImportHistoryDialog(tk.Toplevel):
+    def __init__(self,parent,app,source:str="") -> None:
+        super().__init__(parent);self.app=app;self.source=source;self.title("Historial de importaciones");fit_window(self,1050,560);self.transient(parent.winfo_toplevel());self.grab_set();body=ttk.Frame(self,padding=14);body.pack(fill="both",expand=True)
+        ttk.Label(body,text="Historial de importaciones contables",style="Title.TLabel").pack(anchor="w");actions=ttk.Frame(body);actions.pack(fill="x",pady=7);ttk.Button(actions,text="Exportar Excel",command=lambda:self.export("xlsx")).pack(side="left");ttk.Button(actions,text="Exportar PDF",command=lambda:self.export("pdf")).pack(side="left",padx=5);ttk.Button(actions,text="Imprimir",command=lambda:self.export("pdf",True)).pack(side="left")
+        holder=ttk.Frame(body);holder.pack(fill="both",expand=True);columns=("cliente","fuente","archivo","fecha","leidas","importadas","duplicadas","revisar","error","vigencia","estado","observaciones");self.tree=ttk.Treeview(holder,columns=columns,show="headings")
+        for c in columns:self.tree.heading(c,text=c.replace("_"," ").title());self.tree.column(c,width=120 if c not in ("archivo","observaciones") else 210)
+        sy=ttk.Scrollbar(holder,orient="vertical",command=self.tree.yview);sx=ttk.Scrollbar(holder,orient="horizontal",command=self.tree.xview);self.tree.configure(yscrollcommand=sy.set,xscrollcommand=sx.set);self.tree.grid(row=0,column=0,sticky="nsew");sy.grid(row=0,column=1,sticky="ns");sx.grid(row=1,column=0,sticky="ew");holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
+        self.rows=app.arca_import_service.history(source)
+        for row in self.rows:self.tree.insert("","end",values=(row["cliente"],row["fuente"],row["archivo"],display_date(row["fecha_importacion"]),row["filas_leidas"],row["filas_importadas"],row["filas_duplicadas"],row["filas_revisar"],row["filas_error"],display_date(row["vigencia_detectada"]),row["estado"],row["observaciones"]))
+    def export(self,format_name:str,print_after:bool=False):
+        extension=f".{format_name}";filename=filedialog.asksaveasfilename(parent=self,defaultextension=extension,filetypes=((format_name.upper(),f"*{extension}"),),initialfile=f"Historial {self.source or 'importaciones'}{extension}")
+        if not filename:return
+        try:
+            method=self.app.report_service.export_table_excel if format_name=="xlsx" else self.app.report_service.export_table_pdf;method(Path(filename),"Historial de importaciones",self.rows,self.source or "Todas")
+            if print_after:
+                try:os.startfile(filename,"print")
+                except OSError:messagebox.showinfo("PDF listo",f"Abrí e imprimí:\n{filename}",parent=self)
+            else:messagebox.showinfo("Exportación terminada",f"Se creó:\n{filename}",parent=self)
+        except Exception as error:messagebox.showerror("No se pudo exportar",str(error),parent=self)
 
 
 class RecordDialog(tk.Toplevel):

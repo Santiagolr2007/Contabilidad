@@ -14,6 +14,8 @@ from .common import fit_window, make_tree_sortable
 
 MP_TYPES = (
     "Cobranza", "Pago", "Transferencia recibida", "Transferencia realizada",
+    "Pago con QR", "Rendimientos / Intereses", "Acreditación",
+    "Crédito / Préstamo / Financiación", "Pago de crédito / préstamo",
     "Interés", "Comisión", "Retención", "Percepción", "Impuesto",
     "Devolución", "Contracargo", "Ajuste", "Otro", "A revisar",
 )
@@ -114,7 +116,7 @@ class BasePlatformPanel(ttk.Frame):
 
 
 class MercadoPagoPanel(BasePlatformPanel):
-    SUBTABS = ("Todos los movimientos", "Resumen Mensual", "Movimientos Significativos", "Ranking Mercado Pago", "Transferencias Recibidas", "Transferencias Realizadas", "Cobranzas", "Pagos", "Intereses", "Comisiones", "Retenciones", "Percepciones", "Impuestos", "Contracargos / Devoluciones", "Ajustes", "Otros Movimientos")
+    SUBTABS = ("Todos los movimientos", "Resumen del archivo", "Resumen Mensual", "Movimientos Significativos", "Ranking Mercado Pago", "Transferencias Recibidas", "Transferencias Realizadas", "Pagos con QR", "Acreditaciones", "Créditos / Préstamos", "Cobranzas", "Pagos", "Intereses", "Ingresos", "Egresos", "Comisiones", "Retenciones", "Percepciones", "Impuestos", "Contracargos / Devoluciones", "Ajustes", "Movimientos a revisar")
 
     def __init__(self, parent, app) -> None:
         super().__init__(parent, app, "mp")
@@ -145,13 +147,21 @@ class MercadoPagoPanel(BasePlatformPanel):
     def import_file(self) -> None:
         client_id = self.client_id()
         if not client_id: messagebox.showerror("Cliente requerido", "Debe seleccionar un cliente.", parent=self); return
-        filename = filedialog.askopenfilename(parent=self, filetypes=(("Excel o CSV", "*.xlsx *.csv"),))
+        filename = filedialog.askopenfilename(parent=self, filetypes=(("Excel o CSV", "*.xls *.xlsx *.csv"),))
         if not filename: return
         try:
             if self.app.platform_service.was_imported(client_id, Path(filename), "Mercado Pago") and not messagebox.askyesno("Archivo ya importado", "Este archivo ya figura en el historial. Podés reimportarlo; los movimientos duplicados se omitirán. ¿Continuar?", parent=self): return
+            preview=self.app.platform_service.preview_file(Path(filename),"mp")
             mapping = self.mapping_for(filename)
             if mapping is None: return
-            result = self.app.platform_service.import_mercado_pago(Path(filename), client_id, mapping)
+            summary="\n".join(f"{key.replace('_',' ').title()}: {number_ar(value)}" for key,value in preview.get("summary",{}).items()) or "Sin resumen superior"
+            if not messagebox.askyesno("Vista previa Mercado Pago",f"Hoja: {preview['sheet']}\nFila de encabezado: {preview['header_row']}\nMovimientos detectados: {preview['rows']}\n{summary}\n\n¿Confirmar importación?",parent=self):return
+            duplicate="skip"
+            if self.app.platform_service.was_imported(client_id, Path(filename), "Mercado Pago"):
+                answer=messagebox.askyesnocancel("Duplicados","¿Reemplazar movimientos duplicados?\nSí: reemplazar · No: omitir · Cancelar: volver",parent=self)
+                if answer is None:return
+                duplicate="replace" if answer else "skip"
+            result = self.app.platform_service.import_mercado_pago(Path(filename), client_id, mapping, duplicate)
             self.refresh(); messagebox.showinfo("Importación Mercado Pago", f"Leídos: {result['read']}\nImportados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nRechazados: {result['rejected']}", parent=self)
         except Exception as error: messagebox.showerror("No se pudo importar", str(error), parent=self)
 
@@ -173,15 +183,20 @@ class MercadoPagoPanel(BasePlatformPanel):
         significant = [row for row in rows if abs(float(row.get("importe_neto") or 0)) >= threshold]
         ranking = [{"direccion": "Ingreso", "posicion": index, **row} for index, row in enumerate(self.app.platform_service.mp_ranking(client_id, "Ingreso"), 1)] + [{"direccion": "Egreso", "posicion": index, **row} for index, row in enumerate(self.app.platform_service.mp_ranking(client_id, "Egreso"), 1)]
         assignments = {
-            "Todos los movimientos": rows, "Resumen Mensual": summary,
+            "Todos los movimientos": rows, "Resumen del archivo": self.app.platform_service.mp_file_summaries(client_id), "Resumen Mensual": summary,
             "Movimientos Significativos": significant, "Ranking Mercado Pago": ranking,
             "Transferencias Recibidas": [r for r in rows if r["tipo_movimiento"] == "Transferencia recibida"],
             "Transferencias Realizadas": [r for r in rows if r["tipo_movimiento"] == "Transferencia realizada"],
+            "Pagos con QR": [r for r in rows if r["tipo_movimiento"] == "Pago con QR"],
+            "Acreditaciones": [r for r in rows if r["tipo_movimiento"] == "Acreditación"],
+            "Créditos / Préstamos": [r for r in rows if "crédito" in r["tipo_movimiento"].casefold() or "préstamo" in r["tipo_movimiento"].casefold()],
             "Cobranzas": [r for r in rows if r["tipo_movimiento"] == "Cobranza"], "Pagos": [r for r in rows if r["tipo_movimiento"] == "Pago"],
-            "Intereses": [r for r in rows if r["tipo_movimiento"] == "Interés"], "Comisiones": [r for r in rows if r["tipo_movimiento"] == "Comisión"],
+            "Intereses": [r for r in rows if r["tipo_movimiento"] in ("Interés","Rendimientos / Intereses")],
+            "Ingresos": [r for r in rows if r["ingreso_egreso"] == "Ingreso"], "Egresos": [r for r in rows if r["ingreso_egreso"] == "Egreso"],
+            "Comisiones": [r for r in rows if r["tipo_movimiento"] == "Comisión"],
             "Retenciones": [r for r in rows if r["tipo_movimiento"] == "Retención"], "Percepciones": [r for r in rows if r["tipo_movimiento"] == "Percepción"],
             "Impuestos": [r for r in rows if r["tipo_movimiento"] == "Impuesto"], "Contracargos / Devoluciones": [r for r in rows if r["tipo_movimiento"] in ("Contracargo", "Devolución")],
-            "Ajustes": [r for r in rows if r["tipo_movimiento"] == "Ajuste"], "Otros Movimientos": [r for r in rows if r["tipo_movimiento"] in ("Otro", "A revisar")],
+            "Ajustes": [r for r in rows if r["tipo_movimiento"] == "Ajuste"], "Movimientos a revisar": [r for r in rows if r["tipo_movimiento"] in ("Otro", "A revisar")],
         }
         for title, data in assignments.items(): self.current_rows[title] = data; self.tables[title].fill(data)
 
@@ -204,7 +219,7 @@ class MercadoPagoPanel(BasePlatformPanel):
 
 
 class MercadoLibrePanel(BasePlatformPanel):
-    SUBTABS = ("Todas las operaciones", "Ventas Mercado Libre", "Compras Mercado Libre", "Notas de Crédito", "Anulaciones / Devoluciones", "Resumen Mensual", "Productos más vendidos", "Clientes / compradores principales", "Proveedores / vendedores principales", "Operaciones significativas", "Operaciones en USD", "Operaciones a revisar")
+    SUBTABS = ("Todas las operaciones", "Ventas Mercado Libre", "Compras Mercado Libre", "Notas de Crédito", "Anulaciones / Devoluciones", "Ventas con reclamo", "Ventas con mediación", "Resumen Mensual", "Productos", "Compradores", "Ventas por provincia", "Proveedores / vendedores principales", "Operaciones significativas", "Operaciones en USD", "Operaciones a revisar")
 
     def __init__(self, parent, app) -> None:
         super().__init__(parent, app, "ml")
@@ -213,6 +228,7 @@ class MercadoLibrePanel(BasePlatformPanel):
         ttk.Button(toolbar, text="Cargar Mercado Libre Ventas", style="Primary.TButton", command=lambda: self.import_file("Ventas")).pack(side="left")
         ttk.Button(toolbar, text="Cargar Mercado Libre Compras", command=lambda: self.import_file("Compras")).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Historial", command=self.open_history).pack(side="left")
+        ttk.Button(toolbar,text="Editar clasificación",command=self.edit_classification).pack(side="left",padx=6)
         ttk.Button(toolbar, text="Limpiar período", command=self.clean_period).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Limpiar cliente", command=self.clean_all).pack(side="left")
         ttk.Button(toolbar, text="Actualizar", command=self.refresh).pack(side="right")
@@ -234,13 +250,20 @@ class MercadoLibrePanel(BasePlatformPanel):
     def import_file(self, source_kind: str) -> None:
         client_id = self.client_id()
         if not client_id: messagebox.showerror("Cliente requerido", "Debe seleccionar un cliente.", parent=self); return
-        filename = filedialog.askopenfilename(parent=self, filetypes=(("Excel o CSV", "*.xlsx *.csv"),))
+        filename = filedialog.askopenfilename(parent=self, filetypes=(("Excel o CSV", "*.xls *.xlsx *.csv"),))
         if not filename: return
         try:
             if self.app.platform_service.was_imported(client_id, Path(filename), "Mercado Libre") and not messagebox.askyesno("Archivo ya importado", "Este archivo ya figura en el historial. Podés reimportarlo; las operaciones duplicadas se omitirán. ¿Continuar?", parent=self): return
+            preview=self.app.platform_service.preview_file(Path(filename),"ml")
             mapping = self.mapping_for(filename)
             if mapping is None: return
-            result = self.app.platform_service.import_mercado_libre(Path(filename), client_id, source_kind, mapping)
+            if not messagebox.askyesno("Vista previa Mercado Libre",f"Hoja: {preview['sheet']}\nFila de encabezado: {preview['header_row']}\nOperaciones detectadas: {preview['rows']}\nColumnas reconocidas: {len(preview['mapping'])}\nColumnas sin reconocer: {len(preview['columns'])-len(set(preview['mapping'].values()))}\n\n¿Confirmar importación?",parent=self):return
+            duplicate="skip"
+            if self.app.platform_service.was_imported(client_id, Path(filename), "Mercado Libre"):
+                answer=messagebox.askyesnocancel("Duplicados","¿Reemplazar operaciones duplicadas?\nSí: reemplazar · No: omitir · Cancelar: volver",parent=self)
+                if answer is None:return
+                duplicate="replace" if answer else "skip"
+            result = self.app.platform_service.import_mercado_libre(Path(filename), client_id, source_kind, mapping, duplicate)
             self.refresh(); messagebox.showinfo("Importación Mercado Libre", f"Leídos: {result['read']}\nImportados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nRechazados: {result['rejected']}", parent=self)
         except Exception as error: messagebox.showerror("No se pudo importar", str(error), parent=self)
 
@@ -253,16 +276,22 @@ class MercadoLibrePanel(BasePlatformPanel):
         except ValueError as error: messagebox.showerror("Filtro inválido", str(error), parent=self); return
         try: threshold = float(self.threshold.get().replace(".", "").replace(",", "."))
         except ValueError: threshold = 500000.0
-        products = self._group(rows, "producto"); counterparts = self._group(rows, "contraparte")
+        products = self.app.platform_service.ml_products(client_id); counterparts = self.app.platform_service.ml_buyers(client_id)
         assignments = {
             "Todas las operaciones": rows, "Ventas Mercado Libre": [r for r in rows if r["tipo_operacion"] == "Venta"],
             "Compras Mercado Libre": [r for r in rows if r["tipo_operacion"] == "Compra"], "Notas de Crédito": [r for r in rows if r["tipo_operacion"] == "Nota de crédito"],
             "Anulaciones / Devoluciones": [r for r in rows if r["tipo_operacion"] in ("Anulación", "Devolución")], "Resumen Mensual": self.app.platform_service.ml_summary(client_id),
-            "Productos más vendidos": products, "Clientes / compradores principales": counterparts, "Proveedores / vendedores principales": counterparts,
+            "Ventas con reclamo": [r for r in rows if r.get("estado_especial")=="Venta con reclamo"], "Ventas con mediación": [r for r in rows if r.get("estado_especial")=="Venta con mediación"],
+            "Productos": products, "Compradores": counterparts, "Ventas por provincia": self._group(rows,"provincia"), "Proveedores / vendedores principales": self._group([r for r in rows if r["tipo_operacion"]=="Compra"],"contraparte"),
             "Operaciones significativas": [r for r in rows if abs(float(r["importe_neto"] or 0)) >= threshold], "Operaciones en USD": [r for r in rows if str(r["moneda"]).upper() not in ("ARS", "$", "PESOS")],
             "Operaciones a revisar": [r for r in rows if not r["id_operacion"] and not r["id_venta"] and not r["numero_comprobante"]],
         }
         for title, data in assignments.items(): self.current_rows[title] = data; self.tables[title].fill(data)
+
+    def edit_classification(self) -> None:
+        table=self.tables["Todas las operaciones"];selected=table.tree.selection()
+        if not selected:messagebox.showinfo("Seleccionar operación","Seleccioná una operación.",parent=self);return
+        row=table.row_by_item[selected[0]];ClassificationDialog(self,lambda value:(self.app.platform_service.update_ml_classification(int(row["id"]),value),self.refresh()),values=("Venta","Compra","Nota de crédito","Anulación","Devolución","Venta con reclamo","Venta con mediación","A revisar"))
 
     @staticmethod
     def _group(rows: list[dict], key: str) -> list[dict]:
@@ -303,10 +332,10 @@ class PlatformMappingDialog(tk.Toplevel):
 
 
 class ClassificationDialog(tk.Toplevel):
-    def __init__(self, parent, callback) -> None:
+    def __init__(self, parent, callback, values=MP_TYPES) -> None:
         super().__init__(parent); self.title("Clasificación manual"); fit_window(self, 420, 180); self.transient(parent.winfo_toplevel()); self.grab_set(); self.callback = callback
         body = ttk.Frame(self, padding=18); body.pack(fill="both", expand=True); self.value = tk.StringVar(value="A revisar")
-        ttk.Label(body, text="Clasificación").pack(anchor="w"); ttk.Combobox(body, textvariable=self.value, values=MP_TYPES, state="readonly").pack(fill="x", pady=8)
+        ttk.Label(body, text="Clasificación").pack(anchor="w"); ttk.Combobox(body, textvariable=self.value, values=values, state="readonly").pack(fill="x", pady=8)
         ttk.Button(body, text="Guardar", style="Primary.TButton", command=self.save).pack(anchor="e")
 
     def save(self): self.callback(self.value.get()); self.destroy()

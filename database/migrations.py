@@ -304,7 +304,168 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             "estado_pago_mensual": "TEXT DEFAULT 'pendiente'",
             "estado_recategorizacion": "TEXT DEFAULT 'pendiente'",
             "riesgo_exclusion": "TEXT DEFAULT 'normal'",
+            "tipo_actividad": "TEXT DEFAULT 'Servicios'",
+            "aporta_sipa": "TEXT DEFAULT 'Sí'",
+            "aporta_obra_social": "TEXT DEFAULT 'Sí'",
+            "adherentes_obra_social": "INTEGER DEFAULT 0",
+            "condicion_especial": "TEXT DEFAULT 'Sin condición especial'",
         },
+    )
+    _add_columns(
+        connection,
+        "categorias_monotributo",
+        {
+            "impuesto_integrado_servicios": "REAL DEFAULT 0",
+            "impuesto_integrado_ventas": "REAL DEFAULT 0",
+            "aporte_sipa": "REAL DEFAULT 0",
+            "aporte_obra_social": "REAL DEFAULT 0",
+            "total_servicios": "REAL DEFAULT 0",
+            "total_ventas": "REAL DEFAULT 0",
+            "estado": "TEXT DEFAULT 'Vigente'",
+            "fuente": "TEXT DEFAULT 'Carga manual'",
+            "archivo_origen": "TEXT DEFAULT ''",
+            "fecha_importacion": "TEXT",
+            "referencias": "TEXT DEFAULT ''",
+        },
+    )
+    _add_columns(
+        connection,
+        "vencimientos",
+        {
+            "importe": "REAL DEFAULT 0",
+            "saldo": "REAL DEFAULT 0",
+            "fecha_presentacion": "TEXT",
+            "fecha_pago": "TEXT",
+            "origen": "TEXT DEFAULT 'manual'",
+            "id_importacion": "INTEGER",
+            "actualizado_en": "TEXT",
+        },
+    )
+    _add_columns(
+        connection,
+        "historial_importaciones_plataformas",
+        {
+            "filas_leidas": "INTEGER DEFAULT 0",
+            "fila_encabezado": "INTEGER",
+            "hoja_detectada": "TEXT DEFAULT ''",
+            "columnas_originales": "TEXT DEFAULT ''",
+            "resumen_json": "TEXT DEFAULT '{}'",
+        },
+    )
+    _add_columns(
+        connection,
+        "movimientos_mercado_pago",
+        {
+            "estado_revision": "TEXT DEFAULT ''",
+            "posible_duplicado": "INTEGER DEFAULT 0",
+            "datos_originales_json": "TEXT DEFAULT '{}'",
+        },
+    )
+    _add_columns(
+        connection,
+        "operaciones_mercado_libre",
+        {
+            "sku": "TEXT DEFAULT ''",
+            "variante": "TEXT DEFAULT ''",
+            "ingresos_envio": "REAL DEFAULT 0",
+            "costo_fijo": "REAL DEFAULT 0",
+            "costo_cuotas": "REAL DEFAULT 0",
+            "costo_envio": "REAL DEFAULT 0",
+            "impuestos": "REAL DEFAULT 0",
+            "anulaciones_reembolsos": "REAL DEFAULT 0",
+            "resultado_neto": "REAL DEFAULT 0",
+            "condicion_fiscal_comprador": "TEXT DEFAULT ''",
+            "direccion_facturacion": "TEXT DEFAULT ''",
+            "domicilio_entrega": "TEXT DEFAULT ''",
+            "ciudad": "TEXT DEFAULT ''",
+            "provincia": "TEXT DEFAULT ''",
+            "codigo_postal": "TEXT DEFAULT ''",
+            "pais": "TEXT DEFAULT ''",
+            "reclamo_abierto": "TEXT DEFAULT ''",
+            "reclamo_cerrado": "TEXT DEFAULT ''",
+            "con_mediacion": "TEXT DEFAULT ''",
+            "estado_especial": "TEXT DEFAULT ''",
+            "posible_duplicado": "INTEGER DEFAULT 0",
+            "datos_originales_json": "TEXT DEFAULT '{}'",
+        },
+    )
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS historial_importaciones_contables (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER,
+            fuente TEXT NOT NULL,
+            archivo TEXT NOT NULL,
+            fecha_importacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            usuario TEXT NOT NULL DEFAULT 'NATALIA',
+            filas_leidas INTEGER NOT NULL DEFAULT 0,
+            filas_importadas INTEGER NOT NULL DEFAULT 0,
+            filas_duplicadas INTEGER NOT NULL DEFAULT 0,
+            filas_revisar INTEGER NOT NULL DEFAULT 0,
+            filas_error INTEGER NOT NULL DEFAULT 0,
+            vigencia_detectada TEXT DEFAULT '',
+            estado TEXT NOT NULL DEFAULT 'Importado correctamente',
+            metadatos_json TEXT NOT NULL DEFAULT '{}',
+            observaciones TEXT DEFAULT '',
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS arca_domicilios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            tipo TEXT DEFAULT '', estado TEXT DEFAULT '', direccion TEXT DEFAULT '',
+            localidad TEXT DEFAULT '', codigo_postal TEXT DEFAULT '', provincia TEXT DEFAULT '',
+            orden INTEGER DEFAULT 0, nomenclado TEXT DEFAULT '', fecha_baja TEXT,
+            fecha_actualizacion TEXT, coordenadas TEXT DEFAULT '', observaciones TEXT DEFAULT '',
+            id_importacion INTEGER,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_contables(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS arca_caracterizaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL, descripcion TEXT NOT NULL, periodo_desde TEXT DEFAULT '',
+            dia_periodo TEXT DEFAULT '', codigo_impuesto TEXT DEFAULT '', impuesto TEXT DEFAULT '',
+            fecha_actualizacion TEXT, domicilios TEXT DEFAULT '', estado TEXT DEFAULT 'Activa',
+            id_importacion INTEGER,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_contables(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS arca_impuestos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL, codigo TEXT DEFAULT '', descripcion TEXT NOT NULL,
+            periodo_desde TEXT DEFAULT '', dia_periodo TEXT DEFAULT '', estado TEXT DEFAULT 'Activo',
+            motivo TEXT DEFAULT '', fecha_inscripcion TEXT, fecha_actualizacion TEXT,
+            id_importacion INTEGER,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_contables(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS arca_actividades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL, nomenclador TEXT DEFAULT '', codigo TEXT NOT NULL,
+            descripcion TEXT NOT NULL, condicion TEXT DEFAULT '', orden INTEGER DEFAULT 0,
+            periodo_desde TEXT DEFAULT '', fecha_actualizacion TEXT, tipo TEXT DEFAULT 'Económica',
+            id_importacion INTEGER,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_contables(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS historial_categorias_monotributo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            categoria_id INTEGER NOT NULL, campo TEXT NOT NULL, valor_anterior TEXT DEFAULT '',
+            valor_nuevo TEXT DEFAULT '', responsable TEXT NOT NULL DEFAULT 'NATALIA',
+            motivo TEXT DEFAULT '', fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(categoria_id) REFERENCES categorias_monotributo(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_importaciones_contables_fuente
+            ON historial_importaciones_contables(fuente, fecha_importacion);
+        CREATE INDEX IF NOT EXISTS idx_arca_domicilios_cliente ON arca_domicilios(cliente_id);
+        CREATE INDEX IF NOT EXISTS idx_arca_impuestos_cliente ON arca_impuestos(cliente_id);
+        CREATE INDEX IF NOT EXISTS idx_arca_actividades_cliente ON arca_actividades(cliente_id);
+        """
     )
     # Limpia posibles registros huérfanos generados por versiones antiguas.
     for table in (

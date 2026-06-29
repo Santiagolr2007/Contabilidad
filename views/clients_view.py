@@ -46,6 +46,14 @@ class ClientsView(ttk.Frame):
             style="Primary.TButton",
             command=self.new_client,
         ).pack(side="right", pady=8)
+        ttk.Button(
+            top, text="Importar Sistema Registral ARCA",
+            command=self.import_registry_pdf,
+        ).pack(side="right", padx=8, pady=8)
+        ttk.Button(
+            top, text="Historial de importaciones ARCA",
+            command=self.open_arca_history,
+        ).pack(side="right", pady=8)
 
         filters = ttk.Frame(self)
         filters.pack(fill="x", pady=15)
@@ -238,6 +246,23 @@ class ClientsView(ttk.Frame):
     def new_client(self) -> None:
         ClientForm(self, self.app, None, self.refresh)
 
+    def import_registry_pdf(self) -> None:
+        filename = filedialog.askopenfilename(
+            parent=self, title="Importar datos desde Sistema Registral ARCA",
+            filetypes=(("Documento PDF", "*.pdf"),),
+        )
+        if not filename:
+            return
+        try:
+            preview = self.app.arca_import_service.preview_registry_pdf(Path(filename))
+            RegistryImportPreviewDialog(self, self.app, preview, self.refresh)
+        except Exception as error:
+            messagebox.showerror("No se pudo leer el PDF", str(error), parent=self)
+
+    def open_arca_history(self) -> None:
+        from .administrative_view import AccountingImportHistoryDialog
+        AccountingImportHistoryDialog(self, self.app, "Sistema Registral ARCA")
+
     def open_ledger(self) -> None:
         selection = self.tree.selection()
         if not selection:
@@ -363,6 +388,46 @@ class ClientsView(ttk.Frame):
             messagebox.showinfo("Ficha exportada", f"Se creó:\n{output}")
         except Exception as error:
             messagebox.showerror("No se pudo exportar", str(error))
+
+
+class RegistryImportPreviewDialog(tk.Toplevel):
+    MAIN_FIELDS = (
+        ("cuit_cuil", "CUIT / CUIL"), ("nombre_razon_social", "Nombre / razón social"),
+        ("dni", "DNI"), ("fecha_nacimiento", "Fecha de nacimiento"),
+        ("nacionalidad", "Nacionalidad / país"), ("email", "Email"),
+        ("telefono", "Teléfono"), ("fecha_inscripcion", "Fecha de inscripción"),
+        ("dependencia", "Dependencia"), ("region", "Región"),
+        ("tipo_inscripcion", "Tipo de inscripción"), ("dfe", "Domicilio Fiscal Electrónico"),
+    )
+
+    def __init__(self, parent, app, preview: dict, callback) -> None:
+        super().__init__(parent);self.app=app;self.preview=preview;self.callback=callback
+        self.title("Vista previa de Sistema Registral ARCA");fit_window(self,880,720);self.transient(parent.winfo_toplevel());self.grab_set()
+        footer=ttk.Frame(self,padding=12);footer.pack(side="bottom",fill="x")
+        ttk.Button(footer,text="Cancelar",command=self.destroy).pack(side="right")
+        ttk.Button(footer,text="Confirmar importación",style="Primary.TButton",command=self.confirm).pack(side="right",padx=8)
+        scroll=ScrollableFrame(self,padding=16);scroll.pack(fill="both",expand=True);body=scroll.content
+        ttk.Label(body,text="Datos detectados en Sistema Registral",style="Title.TLabel").grid(row=0,column=0,columnspan=3,sticky="w")
+        existing = f"Se actualizará: {preview['existing_client_name']}" if preview.get("existing_client_id") else "Se creará un cliente nuevo si confirma."
+        ttk.Label(body,text=f"Confianza: {preview['confidence']} · {existing}",style="Subtitle.TLabel").grid(row=1,column=0,columnspan=3,sticky="w",pady=(2,10))
+        self.vars={}
+        for row,(key,label) in enumerate(self.MAIN_FIELDS,2):
+            self.vars[key]=tk.StringVar(value=preview["fields"].get(key,""));ttk.Label(body,text=label).grid(row=row,column=0,sticky="w",pady=3);ttk.Entry(body,textvariable=self.vars[key]).grid(row=row,column=1,sticky="ew",padx=8,pady=3);ttk.Label(body,text="Editable antes de guardar").grid(row=row,column=2,sticky="w")
+        offset=2+len(self.MAIN_FIELDS)
+        for index,(label,value) in enumerate((("Domicilios detectados",len(preview["domicilios"])),("Emails detectados",len(preview["emails"])),("Impuestos detectados",len(preview["impuestos"])),("Actividades detectadas",len(preview["actividades"]))),offset):
+            ttk.Label(body,text=label,font=("Segoe UI",9,"bold")).grid(row=index,column=0,sticky="w",pady=4);ttk.Label(body,text=str(value)).grid(row=index,column=1,sticky="w",padx=8)
+        body.columnconfigure(1,weight=1)
+
+    def confirm(self) -> None:
+        self.preview["fields"].update({key:value.get().strip() for key,value in self.vars.items()})
+        replace=False
+        if self.preview.get("existing_client_id"):
+            answer=messagebox.askyesnocancel("Datos existentes","El CUIT ya existe.\nSí: reemplazar campos con datos detectados.\nNo: completar solamente campos vacíos.\nCancelar: volver.",parent=self)
+            if answer is None:return
+            replace=bool(answer)
+        try:
+            result=self.app.arca_import_service.import_registry_pdf(self.preview,replace=replace);self.callback();messagebox.showinfo("Importación terminada",f"Cliente ID: {result['client_id']}\nCampos actualizados: {result['updated']}\nCampos reemplazados: {result['replaced']}",parent=self);self.destroy()
+        except Exception as error:messagebox.showerror("No se pudo importar",str(error),parent=self)
 
 
 class ClientForm(tk.Toplevel):
@@ -551,6 +616,12 @@ class ClientForm(tk.Toplevel):
                 "%P",
             ),
         )
+        self._combo(frame, 9, "Tipo de actividad para el cálculo", "mono_tipo_actividad", ("Servicios", "Venta de cosas muebles"))
+        self._combo(frame, 10, "Aporta SIPA", "mono_aporta_sipa", ("Sí", "No", "Exceptuado", "A revisar"))
+        self._combo(frame, 11, "Aporta obra social", "mono_aporta_obra_social", ("Sí", "No", "Exceptuado", "A revisar"))
+        self._field(frame, 12, "Cantidad de adherentes de obra social", "mono_adherentes")
+        self._combo(frame, 13, "Condición especial", "mono_condicion_especial", ("Sin condición especial", "Jubilado", "Relación de dependencia", "Locador de inmuebles", "Menor de 18 años", "Trabajador independiente promovido", "Registro de efectores", "Actividad primaria exceptuada", "Otro", "A revisar"))
+        self.vars["mono_tipo_actividad"].set("Servicios");self.vars["mono_aporta_sipa"].set("Sí");self.vars["mono_aporta_obra_social"].set("Sí");self.vars["mono_adherentes"].set("0");self.vars["mono_condicion_especial"].set("Sin condición especial")
 
     def _build_iibb(self, frame) -> None:
         ttk.Label(
@@ -686,6 +757,11 @@ class ClientForm(tk.Toplevel):
             "mono_fecha_baja": display_date(mono.get("fecha_baja_monotributo", "") or ""),
             "mono_estado": mono.get("estado", "activo"),
             "mono_observaciones": mono.get("observaciones_fiscales", ""),
+            "mono_tipo_actividad": mono.get("tipo_actividad", "Servicios"),
+            "mono_aporta_sipa": mono.get("aporta_sipa", "Sí"),
+            "mono_aporta_obra_social": mono.get("aporta_obra_social", "Sí"),
+            "mono_adherentes": mono.get("adherentes_obra_social", 0),
+            "mono_condicion_especial": mono.get("condicion_especial", "Sin condición especial"),
             "iibb_jurisdiccion": iibb.get("jurisdiccion", ""),
             "iibb_regimen": iibb.get("regimen_principal", "Régimen simplificado"),
             "iibb_actividad": iibb.get("actividad", ""),
@@ -756,6 +832,11 @@ class ClientForm(tk.Toplevel):
                 fecha_baja=mono_end,
                 estado=self.vars["mono_estado"].get(),
                 observaciones_fiscales=self.vars["mono_observaciones"].get(),
+                tipo_actividad=self.vars["mono_tipo_actividad"].get(),
+                aporta_sipa=self.vars["mono_aporta_sipa"].get(),
+                aporta_obra_social=self.vars["mono_aporta_obra_social"].get(),
+                adherentes_obra_social=int(positive_number(self.vars["mono_adherentes"].get() or 0, "Adherentes", True)),
+                condicion_especial=self.vars["mono_condicion_especial"].get(),
             )
             client_id = self.app.client_service.save(client, fiscal, mono)
             iibb_start = self.vars["iibb_fecha_alta"].get().strip()

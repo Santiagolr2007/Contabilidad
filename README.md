@@ -64,6 +64,15 @@ versiones anteriores.
   contrapartes, operaciones significativas y neteo mensual.
 - Historial y borrado controlado de importaciones de plataformas.
 - Reportes Mercado Pago y Mercado Libre en Excel, PDF e impresión.
+- Importación robusta de vencimientos ARCA (`.xls`, `.xlsx` o `.csv`) con detección
+  de encabezados, vinculación por CUIT, vista previa, control de duplicados e historial.
+- Importación desde PDF de Sistema Registral ARCA para precargar clientes y su legajo.
+- Importación y versionado de las categorías A a K de Monotributo desde PDF ARCA,
+  con cálculo del pago por actividad, SIPA, obra social y adherentes.
+- Reportes matriciales anuales de compras por proveedor y ventas por comprador,
+  combinando comprobantes ARCA y operaciones de Mercado Libre.
+- Pantalla de Responsables Inscriptos con ventas, compras, IVA estimado,
+  vencimientos, riesgos, exportación e impresión.
 
 Todas las pantallas y exportaciones muestran fechas como `DD/MM/AAAA`, períodos
 como `MM/AAAA` e importes con formato argentino (`1.250.000,00`). Internamente,

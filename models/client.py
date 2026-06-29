@@ -44,3 +44,8 @@ class MonotributoProfile:
     fecha_baja: str = ""
     estado: str = "activo"
     observaciones_fiscales: str = ""
+    tipo_actividad: str = "Servicios"
+    aporta_sipa: str = "Sí"
+    aporta_obra_social: str = "Sí"
+    adherentes_obra_social: int = 0
+    condicion_especial: str = "Sin condición especial"

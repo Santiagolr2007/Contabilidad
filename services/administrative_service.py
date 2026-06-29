@@ -131,19 +131,24 @@ class AdministrativeService:
                 data.get("organismo", ""), data.get("tipo_vencimiento", ""),
                 data["estado"], data.get("responsable") or "NATALIA",
                 data.get("observaciones", ""),
+                positive_number(data.get("importe") or 0, "Importe", allow_zero=True),
+                positive_number(data.get("saldo") or 0, "Saldo", allow_zero=True),
+                data.get("fecha_presentacion") or None, data.get("fecha_pago") or None,
             )
             if record_id:
                 self.database.execute(
                     """UPDATE vencimientos SET cliente_id=?, impuesto=?, periodo=?,
                        fecha_vencimiento=?, organismo=?, tipo_vencimiento=?, estado=?,
-                       responsable=?, observaciones=? WHERE id=?""",
+                       responsable=?, observaciones=?,importe=?,saldo=?,fecha_presentacion=?,
+                       fecha_pago=?,actualizado_en=CURRENT_TIMESTAMP WHERE id=?""",
                     (*values, record_id),
                 )
                 return record_id
             return self.database.execute(
                 """INSERT INTO vencimientos(cliente_id, impuesto, periodo,
                    fecha_vencimiento, organismo, tipo_vencimiento, estado,
-                   responsable, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   responsable, observaciones,importe,saldo,fecha_presentacion,fecha_pago)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 values,
             )
 

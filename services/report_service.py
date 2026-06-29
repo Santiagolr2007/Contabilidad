@@ -26,6 +26,7 @@ class ReportService:
         "compras_anio": "Compras acumuladas año calendario",
         "compras_12": "Compras últimos 12 meses",
         "proveedores_anual": "Compras por proveedor y mes",
+        "clientes_anual": "Ventas por cliente y mes",
         "recategorizacion": "Recategorización de monotributo",
         "significativos": "Comprobantes significativos",
         "usd": "Comprobantes en USD",
@@ -38,6 +39,13 @@ class ReportService:
         "honorarios": "Honorarios pendientes",
         "mercado_pago": "Reporte Mercado Pago",
         "mercado_libre": "Reporte Mercado Libre",
+        "categorias_vigentes": "Categorías vigentes de Monotributo",
+        "limites_categoria": "Límites por categoría de Monotributo",
+        "valores_monotributo": "Valores mensuales a pagar de Monotributo",
+        "comparativo_categorias": "Comparativo entre categorías de Monotributo",
+        "clientes_categoria": "Clientes por categoría de Monotributo",
+        "clientes_cerca_limite": "Clientes cerca del límite de Monotributo",
+        "clientes_riesgo_exclusion": "Clientes con riesgo de exclusión",
     }
 
     def __init__(self, vouchers: VoucherService) -> None:
@@ -226,15 +234,46 @@ class ReportService:
             return self.export_last_twelve_months(
                 destination, client_id, date_from=date_from, date_to=date_to
             )
-        if report == "proveedores_anual":
+        if report in ("proveedores_anual", "clientes_anual"):
             if not client_id:
-                raise ValueError("Seleccioná un cliente para generar el reporte de proveedores.")
+                raise ValueError("Seleccioná un cliente para generar el reporte anual.")
             start, end = self._validate_date_range(date_from, date_to)
             years = {value.year for value in (start, end) if value}
             if len(years) > 1:
                 raise ValueError("El reporte de proveedores debe corresponder a un único año.")
             year = next(iter(years), date.today().year)
-            return self.export_supplier_matrix(destination, client_id, year)
+            return (
+                self.export_supplier_matrix(destination, client_id, year)
+                if report == "proveedores_anual"
+                else self.export_customer_matrix(destination, client_id, year)
+            )
+        category_reports = {
+            "categorias_vigentes", "limites_categoria", "valores_monotributo",
+            "comparativo_categorias", "clientes_categoria", "clientes_cerca_limite",
+            "clientes_riesgo_exclusion",
+        }
+        if report in category_reports:
+            if report in {"clientes_categoria", "clientes_cerca_limite", "clientes_riesgo_exclusion"}:
+                rows = [dict(row) for row in self.database.query(
+                    """SELECT c.nombre_razon_social cliente,c.cuit_cuil,m.categoria_actual,
+                       m.tipo_actividad,m.riesgo_exclusion,COALESCE(r.ventas_ultimos_12_meses,0) ingresos_12_meses,
+                       COALESCE(cm.tope_ingresos,0) limite_categoria,
+                       CASE WHEN COALESCE(cm.tope_ingresos,0)=0 THEN 0
+                            ELSE COALESCE(r.ventas_ultimos_12_meses,0)/cm.tope_ingresos END porcentaje_utilizado
+                       FROM clientes c JOIN monotributo_cliente m ON m.cliente_id=c.id
+                       LEFT JOIN recategorizaciones_monotributo r ON r.id=(SELECT MAX(r2.id) FROM recategorizaciones_monotributo r2 WHERE r2.cliente_id=c.id)
+                       LEFT JOIN categorias_monotributo cm ON cm.categoria=m.categoria_actual AND cm.estado='Vigente'
+                       WHERE (? IS NULL OR c.id=?) ORDER BY m.categoria_actual,c.nombre_razon_social""",
+                    (client_id, client_id),
+                )]
+                if report == "clientes_cerca_limite": rows = [row for row in rows if float(row["porcentaje_utilizado"] or 0) >= .80]
+                if report == "clientes_riesgo_exclusion": rows = [row for row in rows if float(row["porcentaje_utilizado"] or 0) >= 1 or str(row["riesgo_exclusion"]).casefold() not in ("", "normal", "ok")]
+            else:
+                rows = [dict(row) for row in self.database.query(
+                    "SELECT * FROM categorias_monotributo " + ("WHERE estado='Vigente' " if report != "comparativo_categorias" else "") + "ORDER BY vigencia_desde DESC,categoria"
+                )]
+            if not rows: raise ValueError("No hay datos para el reporte seleccionado.")
+            return self._write_dataframe(destination, self._prepare_excel_dates(pd.DataFrame(rows)), "Monotributo")
 
         condition = " AND cliente_id = ?" if client_id else ""
         params = (client_id,) if client_id else ()
@@ -360,7 +399,15 @@ class ReportService:
                 detail = [row for row in detail if term in " ".join((str(row.get("tipo_movimiento","")),str(row.get("ingreso_egreso","")),str(row.get("contraparte","")),str(row.get("estado","")))).casefold()]
             return {
                 "Movimientos": detail,
+                "Resumen archivo": platform.mp_file_summaries(client_id),
                 "Resumen Mensual": platform.mp_summary(client_id),
+                "Transferencias recibidas": [row for row in detail if row["tipo_movimiento"] == "Transferencia recibida"],
+                "Transferencias enviadas": [row for row in detail if row["tipo_movimiento"] == "Transferencia realizada"],
+                "Pagos QR": [row for row in detail if row["tipo_movimiento"] == "Pago con QR"],
+                "Rendimientos": [row for row in detail if row["tipo_movimiento"] in ("Interés", "Rendimientos / Intereses")],
+                "Créditos": [row for row in detail if "crédito" in row["tipo_movimiento"].casefold() or "préstamo" in row["tipo_movimiento"].casefold()],
+                "Ingresos": [row for row in detail if row["ingreso_egreso"] == "Ingreso"],
+                "Egresos": [row for row in detail if row["ingreso_egreso"] == "Egreso"],
                 "Ranking Ingresos": platform.mp_ranking(client_id, "Ingreso"),
                 "Ranking Egresos": platform.mp_ranking(client_id, "Egreso"),
                 "Significativos": [row for row in detail if abs(float(row["importe_neto"] or 0)) >= 1000],
@@ -384,11 +431,26 @@ class ReportService:
         return {
             "Operaciones": detail,
             "Resumen Mensual": platform.ml_summary(client_id),
-            "Productos": sorted(products.values(), key=lambda item: item["importe_total"], reverse=True),
-            "Compradores": sorted(counterparts.values(), key=lambda item: item["importe_total"], reverse=True),
+            "Productos": platform.ml_products(client_id),
+            "Compradores": platform.ml_buyers(client_id),
+            "Reclamos": [row for row in detail if row.get("estado_especial") == "Venta con reclamo"],
+            "Devoluciones": [row for row in detail if str(row.get("estado_especial", "")).startswith("Venta con devolución")],
+            "Mediaciones": [row for row in detail if row.get("estado_especial") == "Venta con mediación"],
+            "Por provincia": self._aggregate_platform_rows(detail, "provincia"),
             "Significativos": [row for row in detail if abs(float(row["importe_neto"] or 0)) >= 500000],
             "A revisar": [row for row in detail if not row["id_operacion"] and not row["id_venta"] and not row["numero_comprobante"]],
         }
+
+    @staticmethod
+    def _aggregate_platform_rows(rows: list[dict], key: str) -> list[dict]:
+        grouped: dict[str, dict] = {}
+        for row in rows:
+            label = str(row.get(key) or "Sin identificar")
+            grouped.setdefault(label, {key: label, "operaciones": 0, "unidades": 0.0, "importe_neto": 0.0})
+            grouped[label]["operaciones"] += 1
+            grouped[label]["unidades"] += float(row.get("cantidad") or 0)
+            grouped[label]["importe_neto"] += float(row.get("importe_neto") or 0)
+        return sorted(grouped.values(), key=lambda item: item["importe_neto"], reverse=True)
 
     def export_platform_report(
         self, destination: Path, report: str, client_id: int,
@@ -707,19 +769,29 @@ class ReportService:
         workbook.save(destination)
         return destination
 
-    def supplier_matrix(self, client_id: int, year: int) -> pd.DataFrame:
-        rows = self.database.query(
-            """
-            SELECT contraparte_nombre AS proveedor,
-                   CAST(substr(periodo_fiscal, 6, 2) AS INTEGER) AS mes,
-                   SUM(importe_neto_fiscal) AS importe
-            FROM comprobantes_compras
-            WHERE cliente_id = ? AND periodo_fiscal LIKE ?
-            GROUP BY contraparte_nombre, substr(periodo_fiscal, 6, 2)
-            ORDER BY contraparte_nombre COLLATE NOCASE
-            """,
-            (client_id, f"{int(year):04d}-%"),
-        )
+    def supplier_matrix(
+        self, client_id: int, year: int, source: str = "ARCA + Mercado Libre",
+        counterpart: str = "", voucher_type: str = "", currency: str = "",
+    ) -> pd.DataFrame:
+        arca = self.database.query(
+            """SELECT contraparte_nombre nombre,CAST(substr(periodo_fiscal,6,2) AS INTEGER) mes,
+               SUM(importe_neto_fiscal) importe FROM comprobantes_compras
+               WHERE cliente_id=? AND periodo_fiscal LIKE ?
+               AND (?='' OR contraparte_nombre LIKE ?) AND (?='' OR tipo_comprobante=?)
+               AND (?='' OR moneda=?) GROUP BY contraparte_nombre,substr(periodo_fiscal,6,2)""",
+            (client_id, f"{int(year):04d}-%", counterpart, f"%{counterpart}%", voucher_type,
+             voucher_type, currency, currency),
+        ) if source in ("ARCA", "ARCA + Mercado Libre") else []
+        ml = self.database.query(
+            """SELECT contraparte nombre,CAST(substr(periodo,6,2) AS INTEGER) mes,
+               SUM(importe_neto) importe FROM operaciones_mercado_libre
+               WHERE cliente_id=? AND periodo LIKE ? AND tipo_operacion IN ('Compra','Nota de crédito compra','Devolución compra')
+               AND (?='' OR contraparte LIKE ?) AND (?='' OR tipo_comprobante=?)
+               AND (?='' OR moneda=?) GROUP BY contraparte,substr(periodo,6,2)""",
+            (client_id, f"{int(year):04d}-%", counterpart, f"%{counterpart}%", voucher_type,
+             voucher_type, currency, currency),
+        ) if source in ("Mercado Libre", "ARCA + Mercado Libre") else []
+        rows = [*arca, *ml]
         if not rows:
             raise ValueError("No hay compras de proveedores para el año seleccionado.")
         months = (
@@ -728,7 +800,7 @@ class ReportService:
         )
         providers: dict[str, list[float]] = {}
         for row in rows:
-            provider = str(row["proveedor"] or "SIN PROVEEDOR")
+            provider = str(row["nombre"] or "SIN PROVEEDOR")
             providers.setdefault(provider, [0.0] * 12)
             month = int(row["mes"] or 0)
             if 1 <= month <= 12:
@@ -745,6 +817,42 @@ class ReportService:
         totals["Total"] = round(sum(item["Total"] for item in data), 2)
         data.append(totals)
         return pd.DataFrame(data, columns=("Proveedor", *months, "Total"))
+
+    def customer_matrix(
+        self, client_id: int, year: int, source: str = "ARCA + Mercado Libre",
+        counterpart: str = "", voucher_type: str = "", currency: str = "",
+    ) -> pd.DataFrame:
+        arca = self.database.query(
+            """SELECT contraparte_nombre nombre,CAST(substr(periodo_fiscal,6,2) AS INTEGER) mes,
+               SUM(importe_neto_fiscal) importe FROM comprobantes_ventas
+               WHERE cliente_id=? AND periodo_fiscal LIKE ?
+               AND (?='' OR contraparte_nombre LIKE ?) AND (?='' OR tipo_comprobante=?)
+               AND (?='' OR moneda=?) GROUP BY contraparte_nombre,substr(periodo_fiscal,6,2)""",
+            (client_id, f"{int(year):04d}-%", counterpart, f"%{counterpart}%", voucher_type,
+             voucher_type, currency, currency),
+        ) if source in ("ARCA", "ARCA + Mercado Libre") else []
+        ml = self.database.query(
+            """SELECT contraparte nombre,CAST(substr(periodo,6,2) AS INTEGER) mes,
+               SUM(importe_neto) importe FROM operaciones_mercado_libre
+               WHERE cliente_id=? AND periodo LIKE ? AND tipo_operacion IN ('Venta','Nota de crédito','Anulación','Devolución')
+               AND (?='' OR contraparte LIKE ?) AND (?='' OR tipo_comprobante=?)
+               AND (?='' OR moneda=?) GROUP BY contraparte,substr(periodo,6,2)""",
+            (client_id, f"{int(year):04d}-%", counterpart, f"%{counterpart}%", voucher_type,
+             voucher_type, currency, currency),
+        ) if source in ("Mercado Libre", "ARCA + Mercado Libre") else []
+        rows = [*arca, *ml]
+        if not rows: raise ValueError("No hay ventas de clientes para el año seleccionado.")
+        months = ("Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre")
+        customers: dict[str, list[float]] = {}
+        for row in rows:
+            name = str(row["nombre"] or "SIN IDENTIFICAR"); customers.setdefault(name,[0.0]*12)
+            month=int(row["mes"] or 0)
+            if 1 <= month <= 12: customers[name][month-1] += float(row["importe"] or 0)
+        data=[]
+        for name,values in customers.items():
+            item={"Cliente / Comprador":name}; item.update({month:round(values[i],2) for i,month in enumerate(months)}); item["Total"]=round(sum(values),2); data.append(item)
+        totals={"Cliente / Comprador":"TOTAL"}; totals.update({month:round(sum(item[month] for item in data),2) for month in months}); totals["Total"]=round(sum(item["Total"] for item in data),2); data.append(totals)
+        return pd.DataFrame(data,columns=("Cliente / Comprador",*months,"Total"))
 
     def export_supplier_matrix(
         self, destination: Path, client_id: int, year: int
@@ -766,6 +874,18 @@ class ReportService:
         sheet.freeze_panes = "B2"
         workbook.save(destination)
         return destination
+
+    def export_customer_matrix(self, destination: Path, client_id: int, year: int) -> Path:
+        dataframe = self.customer_matrix(client_id, year)
+        currency = '"$"#,##0.00;[Red]-"$"#,##0.00'
+        formats = {column: currency for column in dataframe.columns if column != "Cliente / Comprador"}
+        sheet_name = f"Clientes {int(year)}"
+        self._write_dataframe(destination, dataframe, sheet_name, formats)
+        workbook = load_workbook(destination); sheet = workbook[sheet_name]
+        for cell in sheet[sheet.max_row]:
+            cell.fill = PatternFill("solid", fgColor="D9EAF7"); cell.font = Font(bold=True, color="17324D")
+            cell.border = Border(top=Side(style="medium", color="1F4E78"))
+        sheet.freeze_panes = "B2"; workbook.save(destination); return destination
 
     def export_vouchers(
         self,

@@ -7,6 +7,7 @@ from database import Database
 from services import (
     ClientService,
     AdministrativeService,
+    ArcaImportService,
     AlertService,
     ConfigService,
     DashboardService,
@@ -15,6 +16,7 @@ from services import (
     LedgerService,
     LedgerExportService,
     MonotributoService,
+    MonotributoCategoriesService,
     PlatformService,
     ReportService,
     RecategorizationService,
@@ -48,6 +50,7 @@ class AccountingStudioApp(tk.Tk):
         self.database = database
         self.config_service = ConfigService(database)
         self.administrative_service = AdministrativeService(database)
+        self.arca_import_service = ArcaImportService(database)
         self.client_service = ClientService(database)
         self.voucher_service = VoucherService(database, self.config_service)
         self.import_service = ImportService(database, self.voucher_service)
@@ -55,6 +58,7 @@ class AccountingStudioApp(tk.Tk):
         self.monotributo_service = MonotributoService(
             database, self.voucher_service, self.config_service
         )
+        self.monotributo_categories_service = MonotributoCategoriesService(database)
         self.iibb_service = IibbService(database, self.config_service)
         self.ledger_service = LedgerService(database)
         self.ledger_export_service = LedgerExportService(database, self.ledger_service)
