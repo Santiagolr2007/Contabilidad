@@ -52,6 +52,21 @@ class TwoRowNotebook(ttk.Frame):
         for position, button in enumerate(self.buttons):
             button.configure(style="Primary.TButton" if position == index else "TButton")
 
+    def tabs(self) -> tuple[ttk.Frame, ...]:
+        return tuple(self.pages)
+
+    def forget(self, page) -> None:
+        if page not in self.pages:
+            return
+        index = self.pages.index(page)
+        self.pages.pop(index).destroy()
+        self.buttons.pop(index).destroy()
+        for position, button in enumerate(self.buttons):
+            button.grid_configure(row=position // self.columns, column=position % self.columns)
+            button.configure(command=lambda selected=position: self.select(selected))
+        if self.pages:
+            self.select(min(index, len(self.pages) - 1))
+
 
 class ClientLedgerDialog(tk.Toplevel):
     def __init__(self, parent, app, client_id: int) -> None:

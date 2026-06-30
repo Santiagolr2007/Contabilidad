@@ -21,6 +21,7 @@ from services import (
     ReportService,
     RecategorizationService,
     VoucherService,
+    ResponsibleService,
 )
 
 from .accounting_view import AccountingView
@@ -32,6 +33,7 @@ from .dashboard_view import DashboardView
 from .monotributo_view import MonotributoView
 from .reports_view import ReportsView
 from .regime_view import RegimeView
+from .responsible_view import ResponsibleInscriptoView
 from .placeholder_view import PlaceholderView
 from .theme import COLORS, configure_theme
 
@@ -70,6 +72,7 @@ class AccountingStudioApp(tk.Tk):
             database, self.config_service, self.voucher_service, self.monotributo_service
         )
         self.report_service = ReportService(self.voucher_service)
+        self.responsible_service = ResponsibleService(database)
 
         self.sidebar = tk.Frame(self, bg=COLORS["navy"], width=235)
         self.sidebar.pack(side="left", fill="y")
@@ -163,7 +166,7 @@ class AccountingStudioApp(tk.Tk):
             ),
             "contable": lambda: AccountingView(self.content, self),
             "monotributistas": lambda: MonotributoView(self.content, self),
-            "responsables": lambda: RegimeView(self.content,self,"Responsables inscriptos","responsable_inscripto"),
+            "responsables": lambda: ResponsibleInscriptoView(self.content, self),
             "ganancias": lambda: RegimeView(self.content,self,"Ganancias","ganancias"),
             "bienes": lambda: RegimeView(self.content,self,"Bienes personales","bienes_personales"),
             "casas": lambda: RegimeView(self.content,self,"Casas particulares","casas_particulares"),

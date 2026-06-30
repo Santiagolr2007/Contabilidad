@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, datetime
 from pathlib import Path
 
@@ -61,6 +62,11 @@ class ReportService:
         self.vouchers = vouchers
         self.database = vouchers.database
 
+    @staticmethod
+    def _normalized_label(value) -> str:
+        text = unicodedata.normalize("NFKD", str(value or "").casefold())
+        return "".join(character for character in text if not unicodedata.combining(character))
+
     def export_table_excel(
         self, destination: Path, title: str, rows: list[dict], filter_text: str = ""
     ) -> Path:
@@ -79,9 +85,9 @@ class ReportService:
         sheet.freeze_panes = "A6"; sheet.auto_filter.ref = f"A5:{sheet.cell(sheet.max_row, sheet.max_column).coordinate}"
         for cell in sheet[5]:
             cell.fill = PatternFill("solid", fgColor="1F4E78"); cell.font = Font(color="FFFFFF", bold=True); cell.alignment = Alignment(horizontal="center")
-        money_terms = ("importe", "saldo", "total", "comision", "retencion", "percepcion", "impuesto", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota")
+        money_terms = ("importe", "saldo", "total", "comision", "retencion", "percepcion", "impuesto", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota", "iva", "debito", "credito", "gravada", "computable", "base")
         for column_index, cell in enumerate(sheet[5], 1):
-            name = str(cell.value or "").casefold()
+            name = self._normalized_label(cell.value)
             for row_index in range(6, sheet.max_row + 1):
                 target = sheet.cell(row_index, column_index)
                 if "periodo" in name:
@@ -124,10 +130,10 @@ class ReportService:
             )
             selected = [key for key in preferred if key in headers]
             headers = (selected + [key for key in headers if key not in selected])[:16]
-        money_terms = ("importe", "saldo", "total", "comision", "retencion", "percepcion", "impuesto", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota")
+        money_terms = ("importe", "saldo", "total", "comision", "retencion", "percepcion", "impuesto", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota", "iva", "debito", "credito", "gravada", "computable", "base")
 
         def formatted(key, value):
-            normalized = str(key).casefold()
+            normalized = self._normalized_label(key)
             if value is None: return ""
             if "periodo" in normalized: return display_period(str(value))
             if "fecha" in normalized: return display_date(str(value))
@@ -546,12 +552,12 @@ class ReportService:
             sheet.freeze_panes = "A5"; sheet.auto_filter.ref = f"A4:{sheet.cell(sheet.max_row, sheet.max_column).coordinate}"
             for cell in sheet[4]: cell.fill = PatternFill("solid", fgColor="1F4E78"); cell.font = Font(color="FFFFFF", bold=True)
             for column_index, header in enumerate(sheet[4], 1):
-                name = str(header.value or "").casefold()
+                name = self._normalized_label(header.value)
                 for row_index in range(5, sheet.max_row + 1):
                     cell = sheet.cell(row_index, column_index)
                     if "periodo" in name: cell.number_format = "mm/yyyy"; cell.alignment = Alignment(horizontal="center")
                     elif "fecha" in name: cell.number_format = "dd/mm/yyyy"; cell.alignment = Alignment(horizontal="center")
-                    elif any(term in name for term in ("importe", "saldo", "total", "comision", "retencion", "percepcion", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota")) and isinstance(cell.value, (int,float)):
+                    elif any(term in name for term in ("importe", "saldo", "total", "comision", "retencion", "percepcion", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota", "iva", "debito", "credito", "gravada", "computable", "base")) and isinstance(cell.value, (int,float)):
                         cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right")
             for column in sheet.columns:
                 sheet.column_dimensions[column[0].column_letter].width = min(max(len(str(cell.value or "")) for cell in column)+2, 38)

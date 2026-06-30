@@ -29,10 +29,11 @@ class MetricCard(tk.Frame):
 
 
 class ScrollableFrame(ttk.Frame):
-    """Contenedor vertical que mantiene accesible el contenido en pantallas pequeñas."""
+    """Contenedor desplazable; opcionalmente habilita scroll horizontal real."""
 
-    def __init__(self, parent, padding: int = 0):
+    def __init__(self, parent, padding: int = 0, horizontal: bool = False):
         super().__init__(parent)
+        self.horizontal = horizontal
         self.canvas = tk.Canvas(
             self,
             bg=COLORS["background"],
@@ -40,23 +41,35 @@ class ScrollableFrame(ttk.Frame):
             borderwidth=0,
         )
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        xscrollbar = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
         self.content = ttk.Frame(self.canvas, padding=padding)
         self.window_id = self.canvas.create_window(
             (0, 0), window=self.content, anchor="nw"
         )
         self.canvas.configure(yscrollcommand=scrollbar.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        if horizontal:
+            self.canvas.configure(xscrollcommand=xscrollbar.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        if horizontal:
+            xscrollbar.grid(row=1, column=0, sticky="ew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
         self.content.bind("<Configure>", self._content_changed)
         self.canvas.bind("<Configure>", self._canvas_changed)
         self.canvas.bind("<Enter>", self._bind_wheel)
         self.canvas.bind("<Leave>", self._unbind_wheel)
 
     def _content_changed(self, _event=None) -> None:
+        if self.horizontal:
+            width = max(self.canvas.winfo_width(), self.content.winfo_reqwidth())
+            self.canvas.itemconfigure(self.window_id, width=width)
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _canvas_changed(self, event) -> None:
-        self.canvas.itemconfigure(self.window_id, width=event.width)
+        width = max(event.width, self.content.winfo_reqwidth()) if self.horizontal else event.width
+        self.canvas.itemconfigure(self.window_id, width=width)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _bind_wheel(self, _event=None) -> None:
         self.canvas.bind_all("<MouseWheel>", self._mousewheel)

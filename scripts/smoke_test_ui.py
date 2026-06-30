@@ -13,6 +13,7 @@ from views.administrative_view import RecordDialog  # noqa: E402
 from views.clients_view import ClientForm  # noqa: E402
 from views.reports_view import LastTwelveMonthsDialog  # noqa: E402
 from views.ledger_view import ClientLedgerDialog  # noqa: E402
+from models import Client, FiscalProfile, MonotributoProfile  # noqa: E402
 
 
 def main() -> None:
@@ -39,12 +40,32 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as directory:
         application = build_application(Path(directory) / "smoke.db")
         application.withdraw()
+        application.client_service.save(
+            Client("Monotributista Smoke", "20111111112"),
+            FiscalProfile(regimen_principal="monotributista"),
+            MonotributoProfile(categoria_actual="A"),
+        )
+        application.client_service.save(
+            Client("Responsable Smoke SA", "30222222223", tipo_persona="sociedad", rubro="Servicios"),
+            FiscalProfile(regimen_principal="Sociedad Responsable Inscripta", condicion_iva="Responsable Inscripto"),
+            MonotributoProfile(estado="inactivo"),
+        )
         for route in routes:
             print(f"Abriendo: {route}", flush=True)
             application.show_view(route)
             application.update_idletasks()
             print(f"OK: {route}", flush=True)
-            if route == "clientes":
+            if route == "monotributistas":
+                assert len(application.current_view.details.pages) == 13
+                assert max(int(button.grid_info()["row"]) for button in application.current_view.details.buttons) >= 1
+                assert application.current_view.details.pages[0].horizontal
+                print("OK: 13 solapas y doble scroll de Monotributo", flush=True)
+            elif route == "responsables":
+                assert len(application.current_view.details.pages) == 14
+                assert max(int(button.grid_info()["row"]) for button in application.current_view.details.buttons) >= 1
+                assert application.current_view.details.pages[0].horizontal
+                print("OK: 14 solapas y doble scroll de Responsable Inscripto", flush=True)
+            elif route == "clientes":
                 dialog = ClientForm(
                     application.current_view, application, None, lambda: None
                 )

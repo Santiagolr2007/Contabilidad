@@ -36,7 +36,8 @@ versiones anteriores.
 - Tablas ordenables ascendente/descendente y análisis de significativos/moneda extranjera.
 - Rankings de clientes y proveedores.
 - Recategorización de monotributo con parámetros adicionales.
-- Once solapas visibles en la ficha monotributista, incluidas Monotributo e IIBB.
+- Trece solapas en dos filas en la ficha monotributista, incluidas Monotributo e IIBB,
+  con desplazamiento vertical y horizontal.
 - Alertas por concentración, categoría y relación compras/ventas.
 - Gestión consolidada de documentación, tareas, vencimientos y honorarios de todos los clientes.
 - Tareas con filtros por cliente, área, tipo, estado, prioridad, fecha y vencimiento;
@@ -77,8 +78,11 @@ versiones anteriores.
   con cálculo del pago por actividad, SIPA, obra social y adherentes.
 - Reportes matriciales anuales de compras por proveedor y ventas por comprador,
   combinando comprobantes ARCA y operaciones de Mercado Libre.
-- Pantalla de Responsables Inscriptos en tarjetas coloreadas con ventas, compras,
-  IVA, saldo técnico, vencimientos, pagos, documentación, riesgos y alertas.
+- Pantalla individual de Responsables Inscriptos con selector por nombre/CUIT,
+  14 solapas en dos filas y tarjetas coloreadas para ventas, compras, IVA,
+  saldo técnico, vencimientos, pagos, documentación, riesgos y alertas.
+- Consolidación de ARCA, Mercado Libre, Mercado Pago e Ingresos Brutos por
+  responsable, con detalle desplazable y exportación a Excel, PDF e impresión.
 - Reporte General de Tareas exportable a Excel/PDF e imprimible.
 - Mercado Pago y Mercado Libre con barras de acciones separadas, menús en dos
   filas, vista previa, confirmación independiente y scroll horizontal/vertical.

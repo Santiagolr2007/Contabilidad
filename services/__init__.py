@@ -14,6 +14,7 @@ from .platform_service import PlatformService
 from .report_service import ReportService
 from .recategorization_service import RecategorizationService
 from .voucher_service import VoucherService
+from .responsible_service import ResponsibleService
 
 __all__ = [
     "ClientService",
@@ -32,4 +33,5 @@ __all__ = [
     "ReportService",
     "RecategorizationService",
     "VoucherService",
+    "ResponsibleService",
 ]

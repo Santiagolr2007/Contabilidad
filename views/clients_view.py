@@ -160,6 +160,8 @@ class ClientsView(ttk.Frame):
         self.refresh()
         if action == "new":
             self.after(80, self.new_client)
+        elif action == "import_arca":
+            self.after(80, self.import_registry_pdf)
 
     def refresh(self) -> None:
         for item in self.tree.get_children():

@@ -11,6 +11,7 @@ from utils.validators import positive_number
 from .common import MetricCard, ScrollableFrame, fit_window, make_tree_sortable
 from .theme import COLORS
 from .accounting_view import VouchersPanel
+from .ledger_view import TwoRowNotebook
 
 
 class MonotributoView(ttk.Frame):
@@ -47,7 +48,7 @@ class MonotributoView(ttk.Frame):
         ttk.Button(selector, text="Importar categorías ARCA", command=self.import_categories).pack(side="left", padx=8)
         ttk.Button(selector,text="Cambios manuales",command=lambda:CategoryChangesDialog(self,self.app)).pack(side="left",padx=6)
 
-        self.details = ttk.Notebook(self)
+        self.details = TwoRowNotebook(self, columns=7)
         self.details.pack(fill="both", expand=True)
 
         if self.client_map:
@@ -129,10 +130,8 @@ class MonotributoView(ttk.Frame):
         tree.bind("<Double-1>",lambda _event:edit_existing())
 
     def _add_summary_tab(self, data: dict) -> None:
-        # El resumen es un panel fijo de tarjetas: no debe capturar la rueda ni
-        # desplazarse verticalmente dentro de la ficha del monotributista.
-        frame = ttk.Frame(self.details, padding=12)
-        self.details.add(frame, text="Resumen")
+        scroll = ScrollableFrame(self.details, padding=12, horizontal=True)
+        self.details.add(scroll, text="Resumen"); frame = scroll.content
         sales,purchases=data["sales"],data["purchases"]
         risk="Excedido" if data["category_status"]=="excedido" else ("Revisar" if data["active_alerts"] else "Normal")
         cards=(("Actividad fiscal",data["client"].get("actividad_fiscal") or "—",COLORS["green"]),("Denominación",data["client"].get("denominacion") or "—",COLORS["green"]),("Categoría actual",data["client"].get("categoria_actual") or "—",COLORS["blue"]),("Categoría sugerida",data["suggested_category"],COLORS["green"]),("Riesgo fiscal",risk,COLORS["red"] if risk!="Normal" else COLORS["green"]),("Ventas del mes",money(sales.get("mes",0)),COLORS["blue"]),("Ventas año calendario",money(sales.get("anio",0)),COLORS["blue"]),("Ventas últimos 12 meses",money(sales.get("ultimos_12",0)),COLORS["blue"]),("Compras del mes",money(purchases.get("mes",0)),COLORS["amber"]),("Compras año calendario",money(purchases.get("anio",0)),COLORS["amber"]),("Compras últimos 12 meses",money(purchases.get("ultimos_12",0)),COLORS["amber"]),("IIBB estimado",money(data["iibb_estimated"]),COLORS["green"]),("Comprobantes significativos",str(data["significant"]),COLORS["red"]),("USD / alertas",f"{data['usd']} / {data['active_alerts']}",COLORS["red"]))
@@ -141,7 +140,7 @@ class MonotributoView(ttk.Frame):
             MetricCard(frame,title,value,color).grid(row=index//3,column=index%3,sticky="nsew",padx=5,pady=5)
 
     def _add_activity_tab(self, data: dict) -> None:
-        scroll=ScrollableFrame(self.details,padding=16);self.details.add(scroll,text="Monotributo");frame=scroll.content
+        scroll=ScrollableFrame(self.details,padding=16,horizontal=True);self.details.add(scroll,text="Monotributo");frame=scroll.content
         client=data["client"]
         items=(("Actividad fiscal",client.get("actividad_fiscal") or "—"),("Denominación",client.get("denominacion") or "—"),("Categoría actual",client.get("categoria_actual") or "—"),("Categoría sugerida",data["suggested_category"]),("Alta monotributo",display_date(client.get("fecha_alta")) or "—"),("Ingresos últimos 12 meses",money(data["sales"].get("ultimos_12",0))),("Ventas año",money(data["sales"].get("anio",0))),("Compras año",money(data["purchases"].get("anio",0))),("Estado pago mensual",client.get("estado_pago_mensual") or "pendiente"),("Estado recategorización",client.get("estado_recategorizacion") or "pendiente"),("Riesgo exclusión",client.get("riesgo_exclusion") or "normal"),("Observaciones",client.get("observaciones_fiscales") or "—"))
         for row,(label,value) in enumerate(items):
@@ -150,7 +149,7 @@ class MonotributoView(ttk.Frame):
         ttk.Label(frame,text=client.get("codigo_actividad") or "—").grid(row=len(items),column=1,sticky="w",padx=15,pady=5)
 
     def _add_iibb_tab(self, client_id: int) -> None:
-        scroll=ScrollableFrame(self.details,padding=12);self.details.add(scroll,text="IIBB");frame=scroll.content
+        scroll=ScrollableFrame(self.details,padding=12,horizontal=True);self.details.add(scroll,text="IIBB");frame=scroll.content
         profile=self.app.iibb_service.get_profile(client_id); vars={k:tk.StringVar(value=(display_date(v) if k.startswith("fecha") else str(v or ""))) for k,v in profile.items()}
         jurisdictions=self.app.iibb_service.list_jurisdictions(client_id); vars["jurisdiccion"].set(", ".join(row["jurisdiccion"] for row in jurisdictions))
         period=tk.StringVar(value=__import__('datetime').date.today().strftime("%m/%Y")); extras={k:tk.StringVar(value="0") for k in ("retenciones","percepciones","saldo","fijo")};extras.update({"presentacion":tk.StringVar(value="pendiente"),"pago":tk.StringVar(value="pendiente"),"vencimiento":tk.StringVar(value="")})
@@ -300,7 +299,7 @@ class MonotributoView(ttk.Frame):
         load_period()
 
     def _add_recat_tab(self, client_id: int) -> None:
-        scroll=ScrollableFrame(self.details,padding=14);self.details.add(scroll,text="Recateg.");frame=scroll.content
+        scroll=ScrollableFrame(self.details,padding=14,horizontal=True);self.details.add(scroll,text="Recateg.");frame=scroll.content
         calc=self.app.recategorization_service.calculate(client_id)
         display_fields=(("Cliente","cliente"),("Actividad fiscal","actividad_fiscal"),("Denominación","denominacion"),("Período desde","periodo_desde"),("Período hasta","periodo_hasta"),("Ventas 12 meses","ventas"),("Límite categoría actual","limite_categoria"),("Porcentaje utilizado","porcentaje_utilizado"),("Diferencia al límite","diferencia_tope"),("Límite categoría máxima","limite_maximo"),("Diferencia a categoría máxima","diferencia_maximo"),("Categoría actual","categoria_actual"),("Categoría sugerida","categoria_sugerida"),("Estado","estado"))
         for row,(label,key) in enumerate(display_fields):
@@ -343,11 +342,11 @@ class MonotributoView(ttk.Frame):
         except Exception as error: messagebox.showerror("No se pudieron recalcular",str(error))
 
     def _add_documentation_tab(self) -> None:
-        frame=ttk.Frame(self.details,padding=18);self.details.add(frame,text="Documentos")
+        scroll=ScrollableFrame(self.details,padding=18,horizontal=True);self.details.add(scroll,text="Documentos");frame=scroll.content
         ttk.Button(frame,text="Abrir documentación y tareas",style="Primary.TButton",command=lambda:self.app.show_view("documentacion")).pack(anchor="w",pady=5)
 
     def _add_reports_tab(self) -> None:
-        frame=ttk.Frame(self.details,padding=18);self.details.add(frame,text="Reportes")
+        scroll=ScrollableFrame(self.details,padding=18,horizontal=True);self.details.add(scroll,text="Reportes");frame=scroll.content
         ttk.Button(frame,text="Abrir reportes Excel",style="Primary.TButton",command=lambda:self.app.show_view("reportes")).pack(anchor="w",pady=5)
 
     def _add_monthly_tab(self, title: str, rows: list[dict]) -> None:
