@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -397,13 +398,22 @@ class RegistryImportPreviewDialog(tk.Toplevel):
         ("nacionalidad", "Nacionalidad / país"), ("email", "Email"),
         ("telefono", "Teléfono"), ("fecha_inscripcion", "Fecha de inscripción"),
         ("dependencia", "Dependencia"), ("region", "Región"),
-        ("tipo_inscripcion", "Tipo de inscripción"), ("dfe", "Domicilio Fiscal Electrónico"),
+        ("tipo_inscripcion", "Tipo de inscripción"), ("mes_cierre", "Mes de cierre"),
+        ("sistema_control", "Sistema de control"), ("segmento", "Segmento"),
+        ("ultima_actualizacion", "Última actualización"),
+        ("impuestos_activos", "Registra impuestos activos"),
+        ("tipo_documento", "Tipo de documento"), ("genero", "Género"),
+        ("sucesion_indivisa", "Sucesión indivisa"), ("apellido_materno", "Apellido materno"),
+        ("apellido_casada", "Apellido de casada"), ("dfe", "Domicilio Fiscal Electrónico"),
     )
 
     def __init__(self, parent, app, preview: dict, callback) -> None:
         super().__init__(parent);self.app=app;self.preview=preview;self.callback=callback
-        self.title("Vista previa de Sistema Registral ARCA");fit_window(self,880,720);self.transient(parent.winfo_toplevel());self.grab_set()
+        self.title("Vista previa de Sistema Registral ARCA");fit_window(self,1050,780);self.transient(parent.winfo_toplevel());self.grab_set()
         footer=ttk.Frame(self,padding=12);footer.pack(side="bottom",fill="x")
+        ttk.Button(footer,text="Exportar detectado Excel",command=lambda:self.export_detected("xlsx")).pack(side="left")
+        ttk.Button(footer,text="Exportar detectado PDF",command=lambda:self.export_detected("pdf")).pack(side="left",padx=6)
+        ttk.Button(footer,text="Imprimir resumen",command=lambda:self.export_detected("pdf",True)).pack(side="left")
         ttk.Button(footer,text="Cancelar",command=self.destroy).pack(side="right")
         ttk.Button(footer,text="Confirmar importación",style="Primary.TButton",command=self.confirm).pack(side="right",padx=8)
         scroll=ScrollableFrame(self,padding=16);scroll.pack(fill="both",expand=True);body=scroll.content
@@ -416,10 +426,28 @@ class RegistryImportPreviewDialog(tk.Toplevel):
         offset=2+len(self.MAIN_FIELDS)
         for index,(label,value) in enumerate((("Domicilios detectados",len(preview["domicilios"])),("Emails detectados",len(preview["emails"])),("Impuestos detectados",len(preview["impuestos"])),("Actividades detectadas",len(preview["actividades"]))),offset):
             ttk.Label(body,text=label,font=("Segoe UI",9,"bold")).grid(row=index,column=0,sticky="w",pady=4);ttk.Label(body,text=str(value)).grid(row=index,column=1,sticky="w",padx=8)
+        self.structured_actions={}
+        sections=(("contactos","Emails y teléfonos"),("domicilios","Domicilios registrados"),("caracterizaciones","Caracterizaciones"),("impuestos","Impuestos inscriptos"),("actividades","Actividades económicas"))
+        section_row=offset+4
+        for section_key,title in sections:
+            rows=preview.get(section_key,[])
+            box=ttk.LabelFrame(body,text=title,padding=8);box.grid(row=section_row,column=0,columnspan=3,sticky="ew",pady=5);section_row+=1
+            if not rows:ttk.Label(box,text="Sin datos detectados").pack(anchor="w");continue
+            for index,item in enumerate(rows):
+                line=ttk.Frame(box);line.pack(fill="x",pady=2);enabled=tk.BooleanVar(value=True);self.structured_actions[(section_key,index)]=enabled
+                ttk.Checkbutton(line,text="Importar",variable=enabled).pack(side="left")
+                summary=" · ".join(str(value) for key,value in item.items() if key not in ("accion","raw") and value)[:180]
+                ttk.Label(line,text=summary,wraplength=720).pack(side="left",fill="x",expand=True,padx=8)
+                ttk.Button(line,text="Editar",command=lambda sk=section_key,i=index:RegistryStructuredRowDialog(self,preview[sk][i])).pack(side="right")
+        extra=ttk.LabelFrame(body,text="Datos digitales y migratorios",padding=8);extra.grid(row=section_row,column=0,columnspan=3,sticky="ew",pady=5)
+        for label,key in (("Datos digitales","datos_digitales"),("Datos migratorios / extranjeros","datos_migratorios")):
+            line=ttk.Frame(extra);line.pack(fill="x",pady=2);ttk.Label(line,text=label,font=("Segoe UI",9,"bold")).pack(side="left");ttk.Label(line,text=" · ".join(f"{k}: {v}" for k,v in preview.get(key,{}).items() if v),wraplength=650).pack(side="left",fill="x",expand=True,padx=8);ttk.Button(line,text="Editar",command=lambda k=key:RegistryStructuredRowDialog(self,preview[k])).pack(side="right")
         body.columnconfigure(1,weight=1)
 
     def confirm(self) -> None:
         self.preview["fields"].update({key:value.get().strip() for key,value in self.vars.items()})
+        for (section,index),enabled in self.structured_actions.items():
+            self.preview[section][index]["accion"]="Importar" if enabled.get() else "No importar"
         replace=False
         if self.preview.get("existing_client_id"):
             answer=messagebox.askyesnocancel("Datos existentes","El CUIT ya existe.\nSí: reemplazar campos con datos detectados.\nNo: completar solamente campos vacíos.\nCancelar: volver.",parent=self)
@@ -428,6 +456,33 @@ class RegistryImportPreviewDialog(tk.Toplevel):
         try:
             result=self.app.arca_import_service.import_registry_pdf(self.preview,replace=replace);self.callback();messagebox.showinfo("Importación terminada",f"Cliente ID: {result['client_id']}\nCampos actualizados: {result['updated']}\nCampos reemplazados: {result['replaced']}",parent=self);self.destroy()
         except Exception as error:messagebox.showerror("No se pudo importar",str(error),parent=self)
+
+    def export_detected(self,format_name:str,print_after:bool=False) -> None:
+        extension=f".{format_name}";filename=filedialog.asksaveasfilename(parent=self,defaultextension=extension,filetypes=((format_name.upper(),f"*{extension}"),),initialfile=f"Sistema Registral {self.preview['fields'].get('cuit_cuil','')}{extension}")
+        if not filename:return
+        rows=[{"seccion":"Datos principales","campo":key.replace("_"," ").title(),"valor":value,"confianza":self.preview["confidence"]} for key,value in self.preview["fields"].items() if value]
+        for section in ("contactos","domicilios","caracterizaciones","impuestos","actividades"):
+            for index,item in enumerate(self.preview.get(section,[]),1):rows.append({"seccion":section.replace("_"," ").title(),"campo":f"Registro {index}","valor":" · ".join(f"{key}: {value}" for key,value in item.items() if value and key!="accion"),"confianza":self.preview["confidence"]})
+        for section in ("datos_digitales","datos_migratorios"):
+            for key,value in self.preview.get(section,{}).items():
+                if value:rows.append({"seccion":section.replace("_"," ").title(),"campo":key.replace("_"," ").title(),"valor":value,"confianza":self.preview["confidence"]})
+        try:
+            method=self.app.report_service.export_table_excel if format_name=="xlsx" else self.app.report_service.export_table_pdf;method(Path(filename),"Datos detectados - Sistema Registral ARCA",rows,self.preview["path"])
+            if print_after:
+                try:os.startfile(filename,"print")
+                except (AttributeError,OSError):messagebox.showinfo("PDF listo",f"Abrí e imprimí:\n{filename}",parent=self)
+            else:messagebox.showinfo("Exportación terminada",f"Se creó:\n{filename}",parent=self)
+        except Exception as error:messagebox.showerror("No se pudo exportar",str(error),parent=self)
+
+
+class RegistryStructuredRowDialog(tk.Toplevel):
+    def __init__(self,parent,row:dict) -> None:
+        super().__init__(parent);self.row=row;self.title("Editar dato detectado");fit_window(self,680,580);self.transient(parent);self.grab_set();scroll=ScrollableFrame(self,padding=16);scroll.pack(fill="both",expand=True);frame=scroll.content;self.vars={}
+        editable=[key for key in row if key not in ("accion","raw")]
+        for index,key in enumerate(editable):self.vars[key]=tk.StringVar(value=str(row.get(key,"")));ttk.Label(frame,text=key.replace("_"," ").title()).grid(row=index,column=0,sticky="w",pady=3);ttk.Entry(frame,textvariable=self.vars[key]).grid(row=index,column=1,sticky="ew",padx=8,pady=3)
+        frame.columnconfigure(1,weight=1);ttk.Button(frame,text="Guardar cambios",style="Primary.TButton",command=self.save).grid(row=len(editable),column=1,sticky="e",pady=10)
+    def save(self):
+        self.row.update({key:value.get().strip() for key,value in self.vars.items()});self.destroy()
 
 
 class ClientForm(tk.Toplevel):

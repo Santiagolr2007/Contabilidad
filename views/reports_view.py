@@ -41,6 +41,8 @@ class ReportsView(ttk.Frame):
         self.date_from = tk.StringVar()
         self.date_to = tk.StringVar()
         self.platform_filter = tk.StringVar()
+        self.source_filter=tk.StringVar(value="ARCA + Mercado Libre")
+        self.voucher_type_filter=tk.StringVar();self.currency_filter=tk.StringVar()
         ttk.Label(box, text="Reporte").grid(row=0, column=0, sticky="w", pady=6)
         ttk.Combobox(
             box,
@@ -64,8 +66,12 @@ class ReportsView(ttk.Frame):
         ttk.Label(box, text="Tipo / contraparte").grid(row=4, column=0, sticky="w", pady=6)
         ttk.Entry(box, textvariable=self.platform_filter).grid(row=4, column=1, sticky="ew", padx=10)
         ttk.Label(box, text="Filtro opcional para Mercado Pago o Mercado Libre", style="Subtitle.TLabel").grid(row=4, column=2, sticky="w")
+        ttk.Label(box,text="Fuente de matrices").grid(row=5,column=0,sticky="w",pady=6)
+        ttk.Combobox(box,textvariable=self.source_filter,values=("ARCA","Mercado Libre","ARCA + Mercado Libre"),state="readonly").grid(row=5,column=1,sticky="ew",padx=10)
+        ttk.Label(box,text="Tipo de comprobante").grid(row=6,column=0,sticky="w",pady=6);ttk.Entry(box,textvariable=self.voucher_type_filter).grid(row=6,column=1,sticky="ew",padx=10)
+        ttk.Label(box,text="Moneda").grid(row=7,column=0,sticky="w",pady=6);ttk.Combobox(box,textvariable=self.currency_filter,values=("","ARS","USD"),state="readonly").grid(row=7,column=1,sticky="ew",padx=10)
         actions = ttk.Frame(box)
-        actions.grid(row=5, column=1, sticky="e", pady=12)
+        actions.grid(row=8, column=1, sticky="e", pady=12)
         ttk.Button(
             actions,
             text="Ver / editar últimos 12 meses",
@@ -134,6 +140,8 @@ class ReportsView(ttk.Frame):
                 date_from,
                 date_to,
                 self.platform_filter.get().strip(),
+                self.source_filter.get(),self.voucher_type_filter.get().strip(),
+                self.currency_filter.get().strip(),
             )
             messagebox.showinfo("Reporte creado", f"Se creó:\n{filename}")
         except Exception as error:
@@ -151,6 +159,8 @@ class ReportsView(ttk.Frame):
                 self.report_map[self.report.get()], Path(filename),
                 self._selected_client_id(), date_from, date_to,
                 self.platform_filter.get().strip(),
+                self.source_filter.get(),self.voucher_type_filter.get().strip(),
+                self.currency_filter.get().strip(),
             )
             if print_after:
                 try: os.startfile(filename, "print")

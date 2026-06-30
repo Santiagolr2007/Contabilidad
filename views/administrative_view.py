@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from models import Client, FiscalProfile
 from utils.formatters import display_date, display_period, money, normalize_date
 
 from .common import ScrollableFrame, fit_window, selected_tree_id
@@ -60,12 +61,16 @@ DEFINITIONS = {
     "honorarios": (
         "Honorarios",
         (
+            ("tipo_registro", "Tipo de registro", ("Honorario", "Presupuesto", "Pago", "Abono mensual", "Trabajo extraordinario")),
             ("servicio", "Servicio", "text"),
             ("periodo", "Período MM/AAAA", "text"),
             ("importe", "Importe", "text"),
             ("estado", "Estado", ("pendiente de facturar", "facturado", "pendiente de cobro", "cobrado parcial", "cobrado total", "vencido")),
             ("fecha_emision", "Fecha emisión", "date"),
             ("fecha_cobro", "Fecha cobro", "date"),
+            ("fecha_vencimiento", "Fecha vencimiento", "date"),
+            ("importe_pagado", "Importe pagado", "text"),
+            ("numero_comprobante", "Número de comprobante", "text"),
             ("medio_pago", "Medio de pago", "text"),
             ("saldo_pendiente", "Saldo pendiente", "text"),
             ("observaciones", "Observaciones", "text"),
@@ -178,6 +183,10 @@ class AdministrativeView(ttk.Frame):
             return
         try:
             preview = self.app.arca_import_service.preview_deadlines(Path(filename))
+            if preview.get("missing"):
+                dialog=DeadlineMappingDialog(self,preview["missing"],preview["headers"]);self.wait_window(dialog)
+                if dialog.result is None:return
+                preview=self.app.arca_import_service.preview_deadlines(Path(filename),dialog.result)
             DeadlineImportPreviewDialog(self, self.app, preview, self.refresh)
         except Exception as error:
             messagebox.showerror("No se pudo leer el archivo", str(error), parent=self)
@@ -315,6 +324,16 @@ class AdministrativeView(ttk.Frame):
             messagebox.showerror("No se pudo eliminar", str(error), parent=self)
 
 
+class DeadlineMappingDialog(tk.Toplevel):
+    def __init__(self,parent,missing:list[str],headers:list[str]) -> None:
+        super().__init__(parent);self.result=None;self.title("Mapear columnas de vencimientos");fit_window(self,620,420);self.transient(parent.winfo_toplevel());self.grab_set();body=ttk.Frame(self,padding=16);body.pack(fill="both",expand=True);ttk.Label(body,text="Mapeo manual de columnas",style="Title.TLabel").grid(row=0,column=0,columnspan=2,sticky="w",pady=(0,10));self.vars={}
+        for index,field in enumerate(missing,1):self.vars[field]=tk.StringVar();ttk.Label(body,text=field.replace("_"," ").title()).grid(row=index,column=0,sticky="w",pady=4);ttk.Combobox(body,textvariable=self.vars[field],values=headers,state="readonly").grid(row=index,column=1,sticky="ew",padx=8,pady=4)
+        body.columnconfigure(1,weight=1);ttk.Button(body,text="Cancelar",command=self.destroy).grid(row=len(missing)+1,column=0,pady=12);ttk.Button(body,text="Aplicar mapeo",style="Primary.TButton",command=lambda:self.accept(headers)).grid(row=len(missing)+1,column=1,sticky="e",pady=12)
+    def accept(self,headers):
+        if any(not value.get() for value in self.vars.values()):messagebox.showerror("Mapeo incompleto","Seleccioná todas las columnas.",parent=self);return
+        self.result={field:headers.index(value.get()) for field,value in self.vars.items()};self.destroy()
+
+
 class DeadlineImportPreviewDialog(tk.Toplevel):
     def __init__(self, parent, app, preview: dict, callback) -> None:
         super().__init__(parent)
@@ -335,6 +354,7 @@ class DeadlineImportPreviewDialog(tk.Toplevel):
         for index,row in enumerate(preview["records"]):
             self.tree.insert("","end",iid=str(index),values=(row["accion"],row["cliente"] or "Cliente no encontrado",row["cuit"],row["impuesto"],row["organismo"],display_period(row["periodo"]),display_date(row["fecha_vencimiento"]),row["tipo_vencimiento"],row["estado"],money(row["importe"]),row["confianza"]))
         actions=ttk.Frame(body);actions.pack(fill="x",pady=(10,0))
+        self.duplicate_action=tk.StringVar(value="skip");ttk.Label(actions,text="Duplicados").pack(side="left");ttk.Combobox(actions,textvariable=self.duplicate_action,values=("skip","replace","import"),state="readonly",width=10).pack(side="left",padx=(4,10))
         ttk.Button(actions,text="Alternar importar / no importar",command=self.toggle).pack(side="left")
         ttk.Button(actions,text="Editar seleccionado",command=self.edit).pack(side="left",padx=6)
         ttk.Button(actions,text="Cancelar",command=self.destroy).pack(side="right")
@@ -358,10 +378,8 @@ class DeadlineImportPreviewDialog(tk.Toplevel):
         index=int(selection[0]); DeadlineRowDialog(self,self.app,self.preview["records"][index],lambda:self.redraw(index))
 
     def confirm(self) -> None:
-        action=messagebox.askyesnocancel("Duplicados","¿Reemplazar vencimientos duplicados?\nSí: reemplazar · No: omitir · Cancelar: volver",parent=self)
-        if action is None:return
         try:
-            result=self.app.arca_import_service.import_deadlines(self.preview,"replace" if action else "skip")
+            result=self.app.arca_import_service.import_deadlines(self.preview,self.duplicate_action.get())
             self.callback();messagebox.showinfo("Importación terminada",f"Importados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nCon error: {result['rejected']}",parent=self);self.destroy()
         except Exception as error:messagebox.showerror("No se pudo importar",str(error),parent=self)
 
@@ -375,10 +393,16 @@ class DeadlineRowDialog(tk.Toplevel):
         fields=(("cliente","Cliente"),("impuesto","Impuesto"),("organismo","Organismo"),("periodo","Período AAAA-MM"),("fecha_vencimiento","Fecha AAAA-MM-DD"),("tipo_vencimiento","Tipo"),("estado","Estado"),("importe","Importe"),("saldo","Saldo"),("observaciones","Observaciones"))
         for i,(key,label) in enumerate(fields):
             ttk.Label(frame,text=label).grid(row=i,column=0,sticky="w",pady=4)
-            if key=="cliente": widget=ttk.Combobox(frame,textvariable=self.vars[key],values=tuple(self.clients),state="readonly")
+            if key=="cliente": widget=ttk.Combobox(frame,textvariable=self.vars[key],values=tuple(self.clients),state="readonly");self.client_combo=widget
             else:self.vars[key]=tk.StringVar(value=str(row.get(key,"")));widget=ttk.Entry(frame,textvariable=self.vars[key])
             widget.grid(row=i,column=1,sticky="ew",padx=8,pady=4)
-        frame.columnconfigure(1,weight=1);ttk.Button(frame,text="Guardar cambios",style="Primary.TButton",command=self.save).grid(row=len(fields),column=1,sticky="e",pady=10)
+        frame.columnconfigure(1,weight=1);ttk.Button(frame,text="Crear cliente con CUIT detectado",command=self.create_client).grid(row=len(fields),column=0,sticky="w",pady=10);ttk.Button(frame,text="Guardar cambios",style="Primary.TButton",command=self.save).grid(row=len(fields),column=1,sticky="e",pady=10)
+
+    def create_client(self):
+        try:
+            if not self.row.get("cuit"):raise ValueError("La fila no contiene CUIT para crear el cliente.")
+            client_id=self.app.client_service.save(Client(self.row.get("cliente") or f"Cliente {self.row['cuit']}",self.row["cuit"]),FiscalProfile(),None);label=next(label for label,value in self.clients.items() if value==client_id) if client_id in self.clients.values() else f"{self.row.get('cliente') or 'Cliente'} · {self.row['cuit']}";self.clients[label]=client_id;self.client_combo.configure(values=tuple(self.clients));self.vars["cliente"].set(label);messagebox.showinfo("Cliente creado","El cliente mínimo fue creado y vinculado a esta fila.",parent=self)
+        except Exception as error:messagebox.showerror("No se pudo crear",str(error),parent=self)
 
     def save(self):
         try:

@@ -62,7 +62,8 @@ class MonotributoService:
                    COALESCE(NULLIF(m.actividad_fiscal, ''), m.actividad) AS actividad_fiscal,
                    m.denominacion, m.fecha_alta, m.fecha_baja_monotributo,
                    m.estado_pago_mensual, m.estado_recategorizacion, m.riesgo_exclusion,
-                   m.observaciones_fiscales,
+                   m.observaciones_fiscales,m.tipo_actividad,m.aporta_sipa,
+                   m.aporta_obra_social,m.adherentes_obra_social,m.condicion_especial,
                    COALESCE(i.regimen_principal, '') AS regimen_iibb,
                    COALESCE(i.alicuota, 0) AS alicuota_iibb
             FROM clientes c JOIN monotributo_cliente m ON m.cliente_id = c.id
@@ -87,7 +88,15 @@ class MonotributoService:
             "SELECT COUNT(*) AS cantidad FROM alertas_fiscales WHERE cliente_id = ? AND estado IN ('activa','pendiente')",
             (client_id,),
         )
-        iibb_rate = self.config.get_float("alicuota_iibb_default", 0.035)
+        iibb_rate = float(client["alicuota_iibb"] or self.config.get_float("alicuota_iibb_default", 0.035))
+        current_limit_row = self.database.query_one(
+            """SELECT tope_ingresos FROM categorias_monotributo WHERE categoria=?
+               ORDER BY CASE WHEN estado='Vigente' THEN 0 ELSE 1 END,
+                        vigencia_desde DESC LIMIT 1""", (client["categoria_actual"],),
+        )
+        current_limit = float(current_limit_row["tope_ingresos"] or 0) if current_limit_row else 0.0
+        from .monotributo_categories_service import MonotributoCategoriesService
+        payment = MonotributoCategoriesService(self.database).client_payment(client_id)
         return {
             "client": dict(client),
             "sales": sales,
@@ -95,7 +104,9 @@ class MonotributoService:
             "suggested_category": category,
             "category_limit": category_limit,
             "category_status": category_status,
-            "current_category_limit": next((float(row["tope_ingresos"]) for row in self.database.query("SELECT categoria,tope_ingresos FROM categorias_monotributo ORDER BY vigencia_desde DESC,tope_ingresos") if row["categoria"] == client["categoria_actual"]), 0),
+            "current_category_limit": current_limit,
+            "current_category_utilization": float(sales.get("ultimos_12", 0)) / current_limit if current_limit else 0,
+            "payment": payment,
             "iibb_estimated": float(sales.get("mes", 0)) * iibb_rate,
             "significant": counts["significativos"],
             "usd": counts["usd"],

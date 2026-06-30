@@ -38,7 +38,16 @@ class ReportService:
         "tareas": "Tareas pendientes",
         "honorarios": "Honorarios pendientes",
         "mercado_pago": "Reporte Mercado Pago",
+        "mercado_pago_resumen": "Mercado Pago - Resumen mensual",
+        "mercado_pago_rankings": "Mercado Pago - Rankings",
         "mercado_libre": "Reporte Mercado Libre",
+        "mercado_libre_mes": "Mercado Libre por mes",
+        "mercado_libre_comprador": "Mercado Libre por comprador",
+        "mercado_libre_producto": "Mercado Libre por producto",
+        "mercado_libre_provincia": "Mercado Libre por provincia",
+        "mercado_libre_reclamos": "Mercado Libre con reclamos",
+        "mercado_libre_devoluciones": "Mercado Libre con devoluciones / anulaciones",
+        "mercado_libre_netas": "Ventas netas de Mercado Libre por mes",
         "categorias_vigentes": "Categorías vigentes de Monotributo",
         "limites_categoria": "Límites por categoría de Monotributo",
         "valores_monotributo": "Valores mensuales a pagar de Monotributo",
@@ -221,10 +230,13 @@ class ReportService:
         date_from: str | date | None = None,
         date_to: str | date | None = None,
         platform_filter: str = "",
+        source_filter: str = "ARCA + Mercado Libre",
+        voucher_type_filter: str = "",
+        currency_filter: str = "",
     ) -> Path:
         if report not in self.REPORTS:
             raise ValueError("El reporte seleccionado no existe.")
-        if report in ("mercado_pago", "mercado_libre"):
+        if report.startswith("mercado_pago") or report.startswith("mercado_libre"):
             if not client_id:
                 raise ValueError("Seleccioná un cliente para generar este reporte.")
             return self.export_platform_report(destination, report, client_id, date_from, date_to, platform_filter)
@@ -243,9 +255,9 @@ class ReportService:
                 raise ValueError("El reporte de proveedores debe corresponder a un único año.")
             year = next(iter(years), date.today().year)
             return (
-                self.export_supplier_matrix(destination, client_id, year)
+                self.export_supplier_matrix(destination, client_id, year, source_filter, platform_filter, voucher_type_filter, currency_filter)
                 if report == "proveedores_anual"
-                else self.export_customer_matrix(destination, client_id, year)
+                else self.export_customer_matrix(destination, client_id, year, source_filter, platform_filter, voucher_type_filter, currency_filter)
             )
         category_reports = {
             "categorias_vigentes", "limites_categoria", "valores_monotributo",
@@ -390,17 +402,17 @@ class ReportService:
     ) -> dict[str, list[dict]]:
         start, end = self._validate_date_range(date_from, date_to)
         platform = PlatformService(self.database)
-        if report == "mercado_pago":
+        if report.startswith("mercado_pago"):
             detail = platform.list_mp(client_id)
             if start: detail = [row for row in detail if row["fecha"] >= start.isoformat()]
             if end: detail = [row for row in detail if row["fecha"] <= end.isoformat()]
             if platform_filter:
                 term = platform_filter.casefold()
                 detail = [row for row in detail if term in " ".join((str(row.get("tipo_movimiento","")),str(row.get("ingreso_egreso","")),str(row.get("contraparte","")),str(row.get("estado","")))).casefold()]
-            return {
+            result = {
                 "Movimientos": detail,
                 "Resumen archivo": platform.mp_file_summaries(client_id),
-                "Resumen Mensual": platform.mp_summary(client_id),
+                "Resumen Mensual": platform.mp_summary_rows(detail),
                 "Transferencias recibidas": [row for row in detail if row["tipo_movimiento"] == "Transferencia recibida"],
                 "Transferencias enviadas": [row for row in detail if row["tipo_movimiento"] == "Transferencia realizada"],
                 "Pagos QR": [row for row in detail if row["tipo_movimiento"] == "Pago con QR"],
@@ -408,11 +420,14 @@ class ReportService:
                 "Créditos": [row for row in detail if "crédito" in row["tipo_movimiento"].casefold() or "préstamo" in row["tipo_movimiento"].casefold()],
                 "Ingresos": [row for row in detail if row["ingreso_egreso"] == "Ingreso"],
                 "Egresos": [row for row in detail if row["ingreso_egreso"] == "Egreso"],
-                "Ranking Ingresos": platform.mp_ranking(client_id, "Ingreso"),
-                "Ranking Egresos": platform.mp_ranking(client_id, "Egreso"),
+                "Ranking Ingresos": self._aggregate_platform_rows([row for row in detail if row["ingreso_egreso"]=="Ingreso"],"contraparte"),
+                "Ranking Egresos": self._aggregate_platform_rows([row for row in detail if row["ingreso_egreso"]=="Egreso"],"contraparte"),
                 "Significativos": [row for row in detail if abs(float(row["importe_neto"] or 0)) >= 1000],
                 "A revisar": [row for row in detail if row["tipo_movimiento"] == "A revisar"],
             }
+            if report == "mercado_pago_resumen": return {"Resumen Mensual":result["Resumen Mensual"],"Resumen archivo":result["Resumen archivo"]}
+            if report == "mercado_pago_rankings": return {"Ranking Ingresos":result["Ranking Ingresos"],"Ranking Egresos":result["Ranking Egresos"]}
+            return result
         detail = platform.list_ml(client_id)
         if start: detail = [row for row in detail if row["fecha"] >= start.isoformat()]
         if end: detail = [row for row in detail if row["fecha"] <= end.isoformat()]
@@ -428,11 +443,11 @@ class ReportService:
             counterpart = row["contraparte"] or "Sin identificar"
             counterparts.setdefault(counterpart, {"contraparte": counterpart, "operaciones": 0, "importe_total": 0.0})
             counterparts[counterpart]["operaciones"] += 1; counterparts[counterpart]["importe_total"] += float(row["importe_neto"] or 0)
-        return {
+        result = {
             "Operaciones": detail,
-            "Resumen Mensual": platform.ml_summary(client_id),
-            "Productos": platform.ml_products(client_id),
-            "Compradores": platform.ml_buyers(client_id),
+            "Resumen Mensual": platform.ml_summary_rows(detail),
+            "Productos": self._aggregate_platform_rows(detail,"producto"),
+            "Compradores": self._aggregate_platform_rows(detail,"contraparte"),
             "Reclamos": [row for row in detail if row.get("estado_especial") == "Venta con reclamo"],
             "Devoluciones": [row for row in detail if str(row.get("estado_especial", "")).startswith("Venta con devolución")],
             "Mediaciones": [row for row in detail if row.get("estado_especial") == "Venta con mediación"],
@@ -440,6 +455,16 @@ class ReportService:
             "Significativos": [row for row in detail if abs(float(row["importe_neto"] or 0)) >= 500000],
             "A revisar": [row for row in detail if not row["id_operacion"] and not row["id_venta"] and not row["numero_comprobante"]],
         }
+        selected={
+            "mercado_libre_mes":("Resumen Mensual",),
+            "mercado_libre_netas":("Resumen Mensual",),
+            "mercado_libre_comprador":("Compradores",),
+            "mercado_libre_producto":("Productos",),
+            "mercado_libre_provincia":("Por provincia",),
+            "mercado_libre_reclamos":("Reclamos",),
+            "mercado_libre_devoluciones":("Devoluciones",),
+        }.get(report)
+        return {name:result[name] for name in selected} if selected else result
 
     @staticmethod
     def _aggregate_platform_rows(rows: list[dict], key: str) -> list[dict]:
@@ -490,18 +515,22 @@ class ReportService:
         self, report: str, destination: Path, client_id: int | None = None,
         date_from: str | date | None = None, date_to: str | date | None = None,
         platform_filter: str = "",
+        source_filter: str = "ARCA + Mercado Libre",
+        voucher_type_filter: str = "", currency_filter: str = "",
     ) -> Path:
-        if report in ("mercado_pago", "mercado_libre"):
+        if report.startswith("mercado_pago") or report.startswith("mercado_libre"):
             if not client_id: raise ValueError("Seleccioná un cliente.")
             sheets = self.platform_report_data(report, client_id, date_from, date_to, platform_filter)
-            rows = sheets.get("Resumen Mensual", []) or sheets.get("Movimientos", []) or sheets.get("Operaciones", [])
+            rows = sheets.get("Resumen Mensual", []) or sheets.get("Movimientos", []) or sheets.get("Operaciones", []) or next(iter(sheets.values()), [])
             return self.export_table_pdf(destination, self.REPORTS[report], rows, f"Cliente ID {client_id}")
         # Para reportes existentes, se genera primero la misma consulta en un Excel
         # temporal y se presenta un resumen tabular del contenido.
         import tempfile
         with tempfile.TemporaryDirectory() as directory:
             xlsx = Path(directory) / "reporte.xlsx"
-            self.export_named(report, xlsx, client_id, date_from, date_to)
+            self.export_named(report, xlsx, client_id, date_from, date_to,
+                              platform_filter, source_filter, voucher_type_filter,
+                              currency_filter)
             frame = pd.read_excel(xlsx)
         return self.export_table_pdf(destination, self.REPORTS[report], frame.to_dict("records"), "Rango seleccionado")
 
@@ -855,9 +884,11 @@ class ReportService:
         return pd.DataFrame(data,columns=("Cliente / Comprador",*months,"Total"))
 
     def export_supplier_matrix(
-        self, destination: Path, client_id: int, year: int
+        self, destination: Path, client_id: int, year: int,
+        source: str = "ARCA + Mercado Libre", counterpart: str = "",
+        voucher_type: str = "", currency_filter: str = "",
     ) -> Path:
-        dataframe = self.supplier_matrix(client_id, year)
+        dataframe = self.supplier_matrix(client_id, year, source, counterpart, voucher_type, currency_filter)
         currency = '"$"#,##0.00;[Red]-"$"#,##0.00'
         formats = {
             column: currency for column in dataframe.columns if column != "Proveedor"
@@ -867,6 +898,11 @@ class ReportService:
         )
         workbook = load_workbook(destination)
         sheet = workbook[f"Proveedores {int(year)}"]
+        client=self.database.query_one("SELECT nombre_razon_social,cuit_cuil FROM clientes WHERE id=?",(client_id,))
+        sheet.oddHeader.left.text=f"Compras por proveedor · {client['nombre_razon_social'] if client else ''}"
+        sheet.oddHeader.center.text=f"CUIT {client['cuit_cuil'] if client else ''} · Año {year}"
+        sheet.oddHeader.right.text=f"Emitido {date.today().strftime('%d/%m/%Y')}"
+        sheet.oddFooter.left.text=f"Fuente: {source} · Contraparte: {counterpart or 'Todas'} · Tipo: {voucher_type or 'Todos'} · Moneda: {currency_filter or 'Todas'}"
         for cell in sheet[sheet.max_row]:
             cell.fill = PatternFill("solid", fgColor="D9EAF7")
             cell.font = Font(bold=True, color="17324D")
@@ -875,13 +911,22 @@ class ReportService:
         workbook.save(destination)
         return destination
 
-    def export_customer_matrix(self, destination: Path, client_id: int, year: int) -> Path:
-        dataframe = self.customer_matrix(client_id, year)
+    def export_customer_matrix(
+        self, destination: Path, client_id: int, year: int,
+        source: str = "ARCA + Mercado Libre", counterpart: str = "",
+        voucher_type: str = "", currency_filter: str = "",
+    ) -> Path:
+        dataframe = self.customer_matrix(client_id, year, source, counterpart, voucher_type, currency_filter)
         currency = '"$"#,##0.00;[Red]-"$"#,##0.00'
         formats = {column: currency for column in dataframe.columns if column != "Cliente / Comprador"}
         sheet_name = f"Clientes {int(year)}"
         self._write_dataframe(destination, dataframe, sheet_name, formats)
         workbook = load_workbook(destination); sheet = workbook[sheet_name]
+        client=self.database.query_one("SELECT nombre_razon_social,cuit_cuil FROM clientes WHERE id=?",(client_id,))
+        sheet.oddHeader.left.text=f"Ventas por comprador · {client['nombre_razon_social'] if client else ''}"
+        sheet.oddHeader.center.text=f"CUIT {client['cuit_cuil'] if client else ''} · Año {year}"
+        sheet.oddHeader.right.text=f"Emitido {date.today().strftime('%d/%m/%Y')}"
+        sheet.oddFooter.left.text=f"Fuente: {source} · Contraparte: {counterpart or 'Todos'} · Tipo: {voucher_type or 'Todos'} · Moneda: {currency_filter or 'Todas'}"
         for cell in sheet[sheet.max_row]:
             cell.fill = PatternFill("solid", fgColor="D9EAF7"); cell.font = Font(bold=True, color="17324D")
             cell.border = Border(top=Side(style="medium", color="1F4E78"))

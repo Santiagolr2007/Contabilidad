@@ -11,9 +11,11 @@ from database import Database, initialize_database
 from database.seed import seed_reference_data
 from models import Client, FiscalProfile, MonotributoProfile
 from services import (
-    ArcaImportService, ClientService, ConfigService,
+    AdministrativeService, ArcaImportService, ClientService, ConfigService,
     MonotributoCategoriesService, PlatformService, ReportService, VoucherService,
 )
+from services.monotributo_service import MonotributoService
+from services.recategorization_service import RecategorizationService
 
 
 class ExtendedPromptTests(unittest.TestCase):
@@ -57,6 +59,7 @@ class ExtendedPromptTests(unittest.TestCase):
         service=ArcaImportService(self.database);preview=service.preview_registry_pdf(source);self.assertEqual(preview["fields"]["cuit_cuil"],"27123456785")
         result=service.import_registry_pdf(preview);self.assertTrue(result["client_id"])
         row=self.database.query_one("SELECT codigo_actividad FROM monotributo_cliente WHERE cliente_id=?",(result["client_id"],));self.assertEqual(row["codigo_actividad"],"620100")
+        self.assertTrue(self.database.query_one("SELECT id FROM cliente_legajo_registros WHERE cliente_id=? AND seccion='arca'",(result["client_id"],)))
 
     def test_category_version_payment_and_customer_matrix(self):
         service=MonotributoCategoriesService(self.database)
@@ -70,6 +73,33 @@ class ExtendedPromptTests(unittest.TestCase):
         platform.import_mercado_libre(ml,self.client_id)
         report=ReportService(VoucherService(self.database,self.config));matrix=report.customer_matrix(self.client_id,2026)
         self.assertEqual(matrix.iloc[-1]["Total"],100)
+
+    def test_platform_partial_import_and_logistics(self):
+        source=self.path/"ventas_detalle.xlsx"
+        pd.DataFrame([
+            {"Fecha de venta":"01/06/2026","Ingresos por productos (ARS)":100,"Total (ARS)":90,"# de venta":"A","Comprador":"Uno","Número de seguimiento":"TRK-A","Transportista":"Correo"},
+            {"Fecha de venta":"02/06/2026","Ingresos por productos (ARS)":200,"Total (ARS)":180,"# de venta":"B","Comprador":"Dos","Número de seguimiento":"TRK-B","Transportista":"Expreso"},
+        ]).to_excel(source,index=False)
+        result=PlatformService(self.database).import_mercado_libre(source,self.client_id,selected_rows={1})
+        self.assertEqual(result["imported"],1)
+        row=self.database.query_one("SELECT * FROM operaciones_mercado_libre WHERE cliente_id=?",(self.client_id,))
+        self.assertEqual(row["id_venta"],"B");self.assertEqual(row["numero_seguimiento"],"TRK-B")
+
+    def test_recategorization_thresholds_and_honorarium_detail(self):
+        self.database.execute("DELETE FROM categorias_monotributo")
+        self.database.execute("""INSERT INTO categorias_monotributo(categoria,tope_ingresos,
+            tope_alquileres,tope_superficie,tope_energia,precio_unitario_maximo,vigencia_desde,estado)
+            VALUES('A',1000,100,10,20,50,'2026-01-01','Vigente')""")
+        vouchers=VoucherService(self.database,self.config)
+        from models import Voucher
+        vouchers.create("ventas",Voucher(cliente_id=self.client_id,fecha="2026-06-01",periodo_fiscal="2026-06",tipo_comprobante="Factura C",punto_venta="1",numero_comprobante="900",contraparte_nombre="Cliente",importe_original=950))
+        recat=RecategorizationService(self.database,MonotributoService(self.database,vouchers,self.config))
+        result=recat.calculate(self.client_id,{"superficie":11})
+        self.assertEqual(result["estado"],"Cerca del límite (90%)")
+        self.assertEqual(result["controles_parametros"]["superficie"]["estado"],"Superado")
+        admin=AdministrativeService(self.database)
+        fee=admin.create("honorarios",{"cliente_id":self.client_id,"tipo_registro":"Presupuesto","servicio":"Abono","periodo":"06/2026","importe":"1000","importe_pagado":"400","saldo_pendiente":"600","estado":"cobrado parcial","fecha_emision":"","fecha_cobro":"","fecha_vencimiento":"","medio_pago":"Transferencia","numero_comprobante":"P-1","observaciones":""})
+        saved=admin.get("honorarios",fee);self.assertEqual(saved["tipo_registro"],"Presupuesto");self.assertEqual(saved["importe_pagado"],400);self.assertEqual(saved["saldo_pendiente"],600)
 
 
 if __name__ == "__main__":unittest.main()

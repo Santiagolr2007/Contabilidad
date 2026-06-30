@@ -104,13 +104,27 @@ class PlatformService:
         "provincia": ("provincia", "estado 2", "estado entrega"), "codigo_postal": ("codigo postal",),
         "pais": ("pais",), "reclamo_abierto": ("reclamo abierto",), "reclamo_cerrado": ("reclamo cerrado",),
         "con_mediacion": ("con mediacion", "mediacion"),
+        "descripcion_estado": ("descripcion del estado",), "paquete_multiple": ("paquete de varios productos",),
+        "pertenece_kit": ("pertenece a un kit",), "mes_facturacion": ("mes de facturacion de tus cargos",),
+        "orden_compra": ("orden de compra",), "venta_publicidad": ("venta por publicidad",),
+        "cuotas_agregadas": ("tiene cuotas agregadas",), "factura_adjunta": ("factura adjunta",),
+        "datos_facturacion_comprador": ("datos personales o de empresa",), "negocio": ("negocio",),
+        "forma_entrega": ("forma de entrega",), "fecha_en_camino": ("fecha en camino",),
+        "fecha_entregado": ("fecha entregado",), "transportista": ("transportista",),
+        "numero_seguimiento": ("numero de seguimiento",), "url_seguimiento": ("url de seguimiento",),
+        "revisado_ml": ("revisado por mercado libre",), "fecha_revision": ("fecha de revision",),
+        "dinero_favor": ("dinero a favor",), "resultado_reclamo": ("resultado",),
+        "destino_reclamo": ("destino",), "motivo_resultado": ("motivo del resultado",),
     }
 
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def preview_file(self, path: Path, source: str) -> dict:
-        frame = self._read(path, source)
+    def preview_file(
+        self, path: Path, source: str, header_row: int | None = None,
+        sheet_name: str = "",
+    ) -> dict:
+        frame = self._read(path, source, header_row, sheet_name)
         aliases = self.MP_ALIASES if source == "mp" else self.ML_ALIASES
         mapping = self._mapping(frame.columns, aliases)
         missing = [field for field in ("fecha", "importe_bruto") if field not in mapping]
@@ -122,7 +136,7 @@ class PlatformService:
             "sheet": frame.attrs.get("sheet", ""),
             "header_row": frame.attrs.get("header_row", 1),
             "summary": frame.attrs.get("summary", {}),
-            "preview": frame.head(20).fillna("").to_dict("records"),
+            "preview": [{"_source_index": int(index), **row} for index,row in enumerate(frame.head(20).fillna("").to_dict("records"))],
         }
 
     def was_imported(self, client_id: int, path: Path, source_prefix: str) -> bool:
@@ -142,7 +156,10 @@ class PlatformService:
         return result
 
     @classmethod
-    def _read(cls, path: Path, source: str = "") -> pd.DataFrame:
+    def _read(
+        cls, path: Path, source: str = "", header_row: int | None = None,
+        sheet_name: str = "",
+    ) -> pd.DataFrame:
         suffix = path.suffix.casefold()
         if suffix in (".xlsx", ".xls"):
             raw_sheets = pd.read_excel(path, sheet_name=None, header=None, dtype=object)
@@ -166,9 +183,16 @@ class PlatformService:
             raise ValueError("El archivo debe ser Excel (.xls o .xlsx) o CSV (.csv).")
 
         aliases = cls.MP_ALIASES if source == "mp" else cls.ML_ALIASES if source == "ml" else {**cls.MP_ALIASES, **cls.ML_ALIASES}
+        if sheet_name:
+            raw_sheets = {name:frame for name,frame in raw_sheets.items() if name == sheet_name}
+            if not raw_sheets:
+                raise ValueError("La hoja indicada no existe en el archivo.")
         best = None
         for sheet_name, raw_frame in raw_sheets.items():
-            for row_index in range(min(80, len(raw_frame))):
+            row_indexes = [header_row - 1] if header_row else range(min(80, len(raw_frame)))
+            for row_index in row_indexes:
+                if row_index < 0 or row_index >= len(raw_frame):
+                    continue
                 headers = cls._unique_headers(raw_frame.iloc[row_index].fillna("").tolist())
                 mapping = cls._mapping(headers, aliases)
                 score = len(mapping) + (4 if "fecha" in mapping else 0)
@@ -178,8 +202,8 @@ class PlatformService:
                     score += 4 if "importe_bruto" in mapping else 0
                 if best is None or score > best[0]:
                     best = (score, sheet_name, row_index, raw_frame, headers)
-        if best is None or best[0] < 5:
-            raise ValueError("No se encontró automáticamente la fila real de encabezados.")
+        if best is None:
+            raise ValueError("El archivo no contiene filas legibles.")
         _, sheet_name, row_index, raw_frame, headers = best
         data = raw_frame.iloc[row_index + 1 :].copy()
         data.columns = headers
@@ -262,12 +286,14 @@ class PlatformService:
 
     def import_mercado_pago(
         self, path: Path, client_id: int, manual_mapping: dict | None = None,
-        duplicate_action: str = "skip",
+        duplicate_action: str = "skip", header_row: int | None = None,
+        sheet_name: str = "", selected_rows: set[int] | None = None,
+        row_overrides: dict[int, dict] | None = None,
     ) -> dict:
         if not client_id: raise ValueError("Debe seleccionar un cliente.")
         if duplicate_action not in ("skip", "replace", "import"):
             raise ValueError("La acción de duplicados no es válida.")
-        frame = self._read(path, "mp")
+        frame = self._read(path, "mp", header_row, sheet_name)
         if frame.empty: raise ValueError("El archivo no contiene movimientos.")
         mapping = {**self._mapping(frame.columns, self.MP_ALIASES), **(manual_mapping or {})}
         missing = [field for field in ("fecha", "importe_bruto") if field not in mapping]
@@ -276,9 +302,12 @@ class PlatformService:
         import_id = self._new_history(client_id, "Mercado Pago", path, frame)
         imported = duplicates = review = rejected = 0; periods = set(); messages = []
         for index, source in frame.iterrows():
+            if selected_rows is not None and int(index) not in selected_rows: continue
             try:
                 def get(field, default=""):
                     column = mapping.get(field); value = source.get(column, default) if column else default
+                    if column and row_overrides and int(index) in row_overrides and column in row_overrides[int(index)]:
+                        value = row_overrides[int(index)][column]
                     return "" if pd.isna(value) else value
                 movement_date = parsed_date(get("fecha")); period = movement_date[:7]; periods.add(period)
                 gross = number(get("importe_bruto", get("importe_neto"))); net = number(get("importe_neto", gross))
@@ -309,7 +338,8 @@ class PlatformService:
                     """INSERT INTO movimientos_mercado_pago(cliente_id,fecha,periodo,descripcion,tipo_movimiento,operacion,contraparte,contraparte_documento,medio_pago,id_operacion,id_movimiento,referencia,moneda,importe_bruto,comisiones,retenciones,percepciones,impuestos,importe_neto,saldo,ingreso_egreso,estado,observaciones,nombre_archivo_origen,id_importacion,estado_revision,posible_duplicado,datos_originales_json)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (client_id,movement_date,period,description,classification,operation,counterpart,str(get("contraparte_documento")),str(get("medio_pago")),operation_id,movement_id,str(get("referencia")),str(get("moneda") or "ARS"),gross,number(get("comisiones")),number(get("retenciones")),number(get("percepciones")),number(get("impuestos")),net,number(get("saldo")),direction,str(get("estado")),"",path.name,import_id,"A revisar" if classification == "A revisar" else "Revisado",possible_duplicate,json.dumps(source.to_dict(), ensure_ascii=False, default=str)),
-                ); imported += 1
+                )
+                imported += 1
             except Exception as error:
                 rejected += 1
                 if len(messages) < 10: messages.append(f"Fila {index + 2}: {error}")
@@ -319,11 +349,13 @@ class PlatformService:
     def import_mercado_libre(
         self, path: Path, client_id: int, source_kind: str = "Ventas",
         manual_mapping: dict | None = None, duplicate_action: str = "skip",
+        header_row: int | None = None, sheet_name: str = "",
+        selected_rows: set[int] | None = None, row_overrides: dict[int, dict] | None = None,
     ) -> dict:
         if not client_id: raise ValueError("Debe seleccionar un cliente.")
         if duplicate_action not in ("skip", "replace", "import"):
             raise ValueError("La acción de duplicados no es válida.")
-        frame = self._read(path, "ml")
+        frame = self._read(path, "ml", header_row, sheet_name)
         if frame.empty: raise ValueError("El archivo no contiene operaciones.")
         mapping = {**self._mapping(frame.columns, self.ML_ALIASES), **(manual_mapping or {})}
         missing = [field for field in ("fecha", "importe_bruto") if field not in mapping]
@@ -331,9 +363,12 @@ class PlatformService:
         import_id = self._new_history(client_id, f"Mercado Libre {source_kind}", path, frame)
         imported = duplicates = review = rejected = 0; periods = set(); messages = []
         for index, source in frame.iterrows():
+            if selected_rows is not None and int(index) not in selected_rows: continue
             try:
                 def get(field, default=""):
                     column = mapping.get(field); value = source.get(column, default) if column else default
+                    if column and row_overrides and int(index) in row_overrides and column in row_overrides[int(index)]:
+                        value = row_overrides[int(index)][column]
                     return "" if pd.isna(value) else value
                 operation_date = parsed_date(get("fecha")); period = operation_date[:7]; periods.add(period)
                 type_text = str(get("tipo_operacion") or source_kind[:-1]); voucher = str(get("tipo_comprobante")); state = str(get("estado"))
@@ -382,7 +417,7 @@ class PlatformService:
                     special_state = "Venta entregada"
                 else:
                     special_state = "Venta normal"
-                self.database.execute(
+                inserted_id = self.database.execute(
                     """INSERT INTO operaciones_mercado_libre(
                        cliente_id,fecha,periodo,tipo_operacion,tipo_comprobante,numero_comprobante,
                        estado,contraparte,contraparte_documento,producto,cantidad,precio_unitario,
@@ -406,19 +441,48 @@ class PlatformService:
                      str(get("provincia")),str(get("codigo_postal")),str(get("pais")),claim_open,
                      str(get("reclamo_cerrado")),mediation,special_state,possible_duplicate,
                      json.dumps(source.to_dict(), ensure_ascii=False, default=str)),
-                ); imported += 1
+                )
+                def optional_date(field: str):
+                    value = get(field)
+                    if not str(value).strip():
+                        return None
+                    try:
+                        return parsed_date(value)
+                    except ValueError:
+                        return None
+                self.database.execute(
+                    """UPDATE operaciones_mercado_libre SET descripcion_estado=?,paquete_multiple=?,
+                       pertenece_kit=?,mes_facturacion=?,orden_compra=?,venta_publicidad=?,
+                       cuotas_agregadas=?,factura_adjunta=?,datos_facturacion_comprador=?,negocio=?,
+                       forma_entrega=?,fecha_en_camino=?,fecha_entregado=?,transportista=?,
+                       numero_seguimiento=?,url_seguimiento=?,revisado_ml=?,fecha_revision=?,
+                       dinero_favor=?,resultado_reclamo=?,destino_reclamo=?,motivo_resultado=? WHERE id=?""",
+                    (str(get("descripcion_estado")),str(get("paquete_multiple")),str(get("pertenece_kit")),
+                     str(get("mes_facturacion")),str(get("orden_compra")),str(get("venta_publicidad")),
+                     str(get("cuotas_agregadas")),str(get("factura_adjunta")),str(get("datos_facturacion_comprador")),
+                     str(get("negocio")),str(get("forma_entrega")),optional_date("fecha_en_camino"),
+                     optional_date("fecha_entregado"),str(get("transportista")),str(get("numero_seguimiento")),
+                     str(get("url_seguimiento")),str(get("revisado_ml")),optional_date("fecha_revision"),
+                     number(get("dinero_favor")),str(get("resultado_reclamo")),str(get("destino_reclamo")),
+                     str(get("motivo_resultado")),inserted_id),
+                )
+                imported += 1
             except Exception as error:
                 rejected += 1
                 if len(messages) < 10: messages.append(f"Fila {index + 2}: {error}")
         self._finish_history(import_id, imported, duplicates, review, rejected, periods)
         return {"import_id": import_id, "read": len(frame), "imported": imported, "duplicates": duplicates, "review": review, "rejected": rejected, "messages": messages}
 
-    def list_mp(self, client_id: int, period: str = "", movement_type: str = "", direction: str = "", search: str = "") -> list[dict]:
+    def list_mp(self, client_id: int, period: str = "", movement_type: str = "", direction: str = "", search: str = "", year: str = "", month: str = "", minimum: float = 0, state: str = "") -> list[dict]:
         conditions = ["cliente_id=?"]; params: list = [client_id]
         if period: conditions.append("periodo=?"); params.append(normalize_period(period))
         if movement_type and movement_type != "Todos": conditions.append("tipo_movimiento=?"); params.append(movement_type)
         if direction and direction != "Todos": conditions.append("ingreso_egreso=?"); params.append(direction)
         if search: conditions.append("(contraparte LIKE ? OR descripcion LIKE ? OR id_operacion LIKE ?)"); params.extend([f"%{search}%"]*3)
+        if year: conditions.append("substr(periodo,1,4)=?");params.append(str(year))
+        if month: conditions.append("substr(periodo,6,2)=?");params.append(str(month).zfill(2))
+        if minimum: conditions.append("ABS(importe_neto)>=?");params.append(float(minimum))
+        if state and state != "Todos": conditions.append("estado=?");params.append(state)
         return [dict(row) for row in self.database.query(f"SELECT * FROM movimientos_mercado_pago WHERE {' AND '.join(conditions)} ORDER BY fecha DESC,id DESC", params)]
 
     def mp_summary(self, client_id: int) -> list[dict]:
@@ -444,6 +508,14 @@ class PlatformService:
             row["observaciones"] = "Revisar diferencia" if abs(row["diferencia_control"]) > .01 else "OK"
         return rows
 
+    @staticmethod
+    def mp_summary_rows(rows: list[dict]) -> list[dict]:
+        grouped: dict[str,dict] = {}
+        for row in rows:
+            period=row.get("periodo","");item=grouped.setdefault(period,{"periodo":period,"total_ingresos":0.0,"total_egresos":0.0,"comisiones":0.0,"retenciones":0.0,"percepciones":0.0,"impuestos":0.0,"cantidad_movimientos":0})
+            direction=row.get("ingreso_egreso");amount=abs(float(row.get("importe_neto") or 0));item["total_ingresos" if direction=="Ingreso" else "total_egresos"]+=amount;item["comisiones"]+=abs(float(row.get("comisiones") or 0));item["retenciones"]+=abs(float(row.get("retenciones") or 0));item["percepciones"]+=abs(float(row.get("percepciones") or 0));item["impuestos"]+=abs(float(row.get("impuestos") or 0));item["cantidad_movimientos"]+=1
+        return sorted(grouped.values(),key=lambda item:item["periodo"],reverse=True)
+
     def mp_ranking(self, client_id: int, direction: str) -> list[dict]:
         return [dict(row) for row in self.database.query(
             """SELECT contraparte,contraparte_documento,COUNT(*) cantidad_movimientos,
@@ -452,11 +524,17 @@ class PlatformService:
                 FROM movimientos_mercado_pago WHERE cliente_id=? AND ingreso_egreso=?
                 GROUP BY contraparte,contraparte_documento ORDER BY total_neto DESC""", (client_id,direction))]
 
-    def list_ml(self, client_id: int, period: str = "", operation_type: str = "", search: str = "") -> list[dict]:
+    def list_ml(self, client_id: int, period: str = "", operation_type: str = "", search: str = "", year: str = "", month: str = "", minimum: float = 0, state: str = "", province: str = "", product: str = "") -> list[dict]:
         conditions = ["cliente_id=?"]; params: list = [client_id]
         if period: conditions.append("periodo=?"); params.append(normalize_period(period))
         if operation_type and operation_type != "Todos": conditions.append("tipo_operacion=?"); params.append(operation_type)
         if search: conditions.append("(contraparte LIKE ? OR producto LIKE ? OR numero_comprobante LIKE ?)"); params.extend([f"%{search}%"]*3)
+        if year: conditions.append("substr(periodo,1,4)=?");params.append(str(year))
+        if month: conditions.append("substr(periodo,6,2)=?");params.append(str(month).zfill(2))
+        if minimum: conditions.append("ABS(importe_neto)>=?");params.append(float(minimum))
+        if state and state != "Todos": conditions.append("(estado=? OR estado_especial=?)");params.extend([state,state])
+        if province: conditions.append("provincia LIKE ?");params.append(f"%{province}%")
+        if product: conditions.append("producto LIKE ?");params.append(f"%{product}%")
         return [dict(row) for row in self.database.query(f"SELECT * FROM operaciones_mercado_libre WHERE {' AND '.join(conditions)} ORDER BY fecha DESC,id DESC", params)]
 
     def ml_summary(self, client_id: int) -> list[dict]:
@@ -477,6 +555,15 @@ class PlatformService:
                 SUM(CASE WHEN estado_especial LIKE 'Venta con devolución%' THEN 1 ELSE 0 END) ventas_devolucion,
                 SUM(CASE WHEN estado_especial='Venta con mediación' THEN 1 ELSE 0 END) ventas_mediacion
                 FROM operaciones_mercado_libre WHERE cliente_id=? GROUP BY periodo ORDER BY periodo DESC""", (client_id,))]
+
+    @staticmethod
+    def ml_summary_rows(rows: list[dict]) -> list[dict]:
+        grouped: dict[str,dict]={}
+        for row in rows:
+            period=row.get("periodo","");item=grouped.setdefault(period,{"periodo":period,"cantidad_ventas":0,"unidades":0.0,"ventas_brutas":0.0,"ingresos_envio":0.0,"comisiones":0.0,"costos_fijos":0.0,"costos_cuotas":0.0,"costos_envio":0.0,"impuestos":0.0,"descuentos":0.0,"anulaciones_reembolsos":0.0,"ventas_netas":0.0,"ventas_reclamo":0,"ventas_devolucion":0,"ventas_mediacion":0})
+            item["cantidad_ventas"]+=1;item["unidades"]+=float(row.get("cantidad") or 0);item["ventas_brutas"]+=float(row.get("importe_bruto") or 0);item["ingresos_envio"]+=float(row.get("ingresos_envio") or 0);item["comisiones"]+=float(row.get("comisiones") or 0);item["costos_fijos"]+=float(row.get("costo_fijo") or 0);item["costos_cuotas"]+=float(row.get("costo_cuotas") or 0);item["costos_envio"]+=float(row.get("costo_envio") or 0);item["impuestos"]+=float(row.get("impuestos") or 0);item["descuentos"]+=float(row.get("descuentos") or 0);item["anulaciones_reembolsos"]+=float(row.get("anulaciones_reembolsos") or 0);item["ventas_netas"]+=float(row.get("importe_neto") or 0);state=row.get("estado_especial","");item["ventas_reclamo"]+=int(state=="Venta con reclamo");item["ventas_devolucion"]+=int(str(state).startswith("Venta con devolución"));item["ventas_mediacion"]+=int(state=="Venta con mediación")
+        for item in grouped.values():item["ticket_promedio"]=item["ventas_netas"]/item["cantidad_ventas"] if item["cantidad_ventas"] else 0
+        return sorted(grouped.values(),key=lambda item:item["periodo"],reverse=True)
 
     def ml_buyers(self, client_id: int) -> list[dict]:
         return [dict(row) for row in self.database.query(

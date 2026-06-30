@@ -62,6 +62,18 @@ def migrate_database(connection: sqlite3.Connection) -> None:
     )
     _add_columns(
         connection,
+        "honorarios",
+        {
+            "tipo_registro": "TEXT DEFAULT 'Honorario'",
+            "fecha_vencimiento": "TEXT",
+            "importe_pagado": "REAL DEFAULT 0",
+            "numero_comprobante": "TEXT DEFAULT ''",
+            "actualizado_en": "TEXT",
+            "posible_duplicado": "INTEGER DEFAULT 0",
+        },
+    )
+    _add_columns(
+        connection,
         "iibb_monotributo",
         {
             "regimen_principal": "TEXT DEFAULT ''",
@@ -387,6 +399,28 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             "estado_especial": "TEXT DEFAULT ''",
             "posible_duplicado": "INTEGER DEFAULT 0",
             "datos_originales_json": "TEXT DEFAULT '{}'",
+            "descripcion_estado": "TEXT DEFAULT ''",
+            "paquete_multiple": "TEXT DEFAULT ''",
+            "pertenece_kit": "TEXT DEFAULT ''",
+            "mes_facturacion": "TEXT DEFAULT ''",
+            "orden_compra": "TEXT DEFAULT ''",
+            "venta_publicidad": "TEXT DEFAULT ''",
+            "cuotas_agregadas": "TEXT DEFAULT ''",
+            "factura_adjunta": "TEXT DEFAULT ''",
+            "datos_facturacion_comprador": "TEXT DEFAULT ''",
+            "negocio": "TEXT DEFAULT ''",
+            "forma_entrega": "TEXT DEFAULT ''",
+            "fecha_en_camino": "TEXT",
+            "fecha_entregado": "TEXT",
+            "transportista": "TEXT DEFAULT ''",
+            "numero_seguimiento": "TEXT DEFAULT ''",
+            "url_seguimiento": "TEXT DEFAULT ''",
+            "revisado_ml": "TEXT DEFAULT ''",
+            "fecha_revision": "TEXT",
+            "dinero_favor": "REAL DEFAULT 0",
+            "resultado_reclamo": "TEXT DEFAULT ''",
+            "destino_reclamo": "TEXT DEFAULT ''",
+            "motivo_resultado": "TEXT DEFAULT ''",
         },
     )
     connection.executescript(
@@ -460,11 +494,70 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             FOREIGN KEY(categoria_id) REFERENCES categorias_monotributo(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS arca_contactos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            clase TEXT NOT NULL,
+            valor TEXT NOT NULL,
+            tipo TEXT DEFAULT '',
+            pais TEXT DEFAULT '',
+            area TEXT DEFAULT '',
+            numero TEXT DEFAULT '',
+            compania TEXT DEFAULT '',
+            alias TEXT DEFAULT '',
+            estado TEXT DEFAULT '',
+            fecha_actualizacion TEXT,
+            principal INTEGER NOT NULL DEFAULT 0,
+            id_importacion INTEGER,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_contables(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS arca_datos_digitales (
+            cliente_id INTEGER PRIMARY KEY,
+            foto_registrada TEXT DEFAULT 'A revisar',
+            firma_registrada TEXT DEFAULT 'A revisar',
+            huella_registrada TEXT DEFAULT 'A revisar',
+            domicilio_fiscal_electronico TEXT DEFAULT 'A revisar',
+            fecha_alta TEXT,
+            fecha_actualizacion TEXT,
+            id_importacion INTEGER,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_contables(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS arca_datos_migratorios (
+            cliente_id INTEGER PRIMARY KEY,
+            tipo_residencia TEXT DEFAULT '',
+            vencimiento_migratorio TEXT,
+            documento_extranjero TEXT DEFAULT '',
+            fecha_actualizacion TEXT,
+            id_importacion INTEGER,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+            FOREIGN KEY(id_importacion) REFERENCES historial_importaciones_contables(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS historial_vencimientos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vencimiento_id INTEGER,
+            cliente_id INTEGER,
+            campo TEXT NOT NULL,
+            valor_anterior TEXT DEFAULT '',
+            valor_nuevo TEXT DEFAULT '',
+            responsable TEXT NOT NULL DEFAULT 'NATALIA',
+            observaciones TEXT DEFAULT '',
+            fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(vencimiento_id) REFERENCES vencimientos(id) ON DELETE SET NULL,
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE SET NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_importaciones_contables_fuente
             ON historial_importaciones_contables(fuente, fecha_importacion);
         CREATE INDEX IF NOT EXISTS idx_arca_domicilios_cliente ON arca_domicilios(cliente_id);
         CREATE INDEX IF NOT EXISTS idx_arca_impuestos_cliente ON arca_impuestos(cliente_id);
         CREATE INDEX IF NOT EXISTS idx_arca_actividades_cliente ON arca_actividades(cliente_id);
+        CREATE INDEX IF NOT EXISTS idx_arca_contactos_cliente ON arca_contactos(cliente_id);
+        CREATE INDEX IF NOT EXISTS idx_historial_vencimientos_registro ON historial_vencimientos(vencimiento_id,fecha);
         """
     )
     # Limpia posibles registros huérfanos generados por versiones antiguas.

@@ -15,7 +15,11 @@ class AlertService:
         "concentracion_compras",
         "compras_altas",
         "limite_categoria",
+        "limite_categoria_80",
+        "limite_categoria_90",
+        "limite_categoria_100",
         "limite_maximo",
+        "parametro_monotributo",
         "recategorizacion",
         "muchas_facturas_dia",
         "muchas_facturas_cliente",
@@ -105,6 +109,13 @@ class AlertService:
                         "alta",
                     )
                 )
+            utilization = revenue / category_limit if category_limit else 0
+            if utilization >= 1:
+                alerts.append(("limite_categoria_100", "Los ingresos superan el 100% del límite de la categoría actual.", revenue, "alta"))
+            elif utilization >= .90:
+                alerts.append(("limite_categoria_90", "Los ingresos superan el 90% del límite de la categoría actual.", revenue, "alta"))
+            elif utilization >= .80:
+                alerts.append(("limite_categoria_80", "Los ingresos superan el 80% del límite de la categoría actual.", revenue, "media"))
             if dashboard["suggested_category"] != dashboard["client"].get(
                 "categoria_actual"
             ):
@@ -128,6 +139,19 @@ class AlertService:
                         "alta",
                     )
                 )
+            latest_recat = self.database.query_one(
+                """SELECT r.*,c.tope_alquileres,c.tope_energia,c.tope_superficie,
+                   c.precio_unitario_maximo limite_precio FROM recategorizaciones_monotributo r
+                   LEFT JOIN categorias_monotributo c ON c.categoria=r.categoria_actual
+                   WHERE r.cliente_id=? ORDER BY r.creado_en DESC,c.vigencia_desde DESC LIMIT 1""",
+                (client_id,),
+            )
+            if latest_recat:
+                comparisons=(("alquileres","tope_alquileres","alquileres devengados"),("energia","tope_energia","energía eléctrica"),("superficie","tope_superficie","superficie afectada"),("precio_unitario_maximo","limite_precio","precio unitario máximo"))
+                for actual_field,limit_field,label in comparisons:
+                    actual=float(latest_recat[actual_field] or 0);parameter_limit=float(latest_recat[limit_field] or 0)
+                    if parameter_limit and actual > parameter_limit:
+                        alerts.append(("parametro_monotributo",f"Se supera el parámetro de {label}.",actual,"alta"))
 
         day = self.database.query_one(
             """

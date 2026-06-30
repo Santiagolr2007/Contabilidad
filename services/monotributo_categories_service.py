@@ -62,16 +62,21 @@ class MonotributoCategoriesService:
 
         lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
         rows: list[dict] = []
+        category_positions = [index for index,line in enumerate(lines) if re.match(r"^(?:Categor[ií]a\s+)?[A-K]\b",line,re.I)]
         for category in "ABCDEFGHIJK":
-            candidates = [line for line in lines if re.match(rf"^(?:Categor[ií]a\s+)?{category}\b", line, re.I)]
+            candidate_index = next((index for index,line in enumerate(lines) if re.match(rf"^(?:Categor[ií]a\s+)?{category}\b",line,re.I)),None)
             values: list[float] = []
-            raw = candidates[0] if candidates else ""
+            raw = ""
+            if candidate_index is not None:
+                next_position = next((position for position in category_positions if position > candidate_index), min(candidate_index + 5, len(lines)))
+                raw = " ".join(lines[candidate_index:next_position])
             if raw:
                 tokens = re.findall(r"(?:\$\s*)?-?\d[\d.]*,\d{2}|\d+(?:[.,]\d+)?", raw)
                 values = [_amount(token) for token in tokens]
-            row = {"categoria": category, "vigencia_desde": vigencia, "estado": "Vigente",
+            confidence = "Alta" if len(values) >= len(self.FIELDS) else ("Media" if len(values) >= 5 else "A revisar")
+            row = {"categoria": category, "vigencia_desde": vigencia, "estado": "Vigente" if confidence != "A revisar" else "A revisar",
                    "fuente": "ARCA PDF", "archivo_origen": path.name,
-                   "confianza": "Alta" if len(values) >= 9 else ("Media" if values else "A revisar"),
+                   "confianza": confidence,
                    "accion": "Importar", "observaciones": "", "raw": raw}
             for index, field in enumerate(self.FIELDS):
                 row[field] = values[index] if index < len(values) else 0.0
@@ -147,6 +152,60 @@ class MonotributoCategoriesService:
                filas_duplicadas=?,filas_revisar=?,estado=? WHERE id=?""",
             (imported, duplicates, review, state, import_id),
         )
+        if imported:
+            period = date.today().strftime("%Y-%m")
+            clients = self.database.query(
+                "SELECT cliente_id,categoria_actual FROM monotributo_cliente WHERE estado='activo'"
+            )
+            maximum_row = self.database.query_one(
+                "SELECT MAX(tope_ingresos) limite FROM categorias_monotributo WHERE estado='Vigente'"
+            )
+            maximum = float(maximum_row["limite"] or 0) if maximum_row else 0.0
+            for client in clients:
+                client_id = int(client["cliente_id"])
+                revenue_row = self.database.query_one(
+                    """SELECT COALESCE(SUM(importe_neto_fiscal),0) total FROM comprobantes_ventas
+                       WHERE cliente_id=? AND fecha>=date('now','start of month','-11 months')""",
+                    (client_id,),
+                )
+                revenue = float(revenue_row["total"] or 0) if revenue_row else 0.0
+                limit_row = self.database.query_one(
+                    """SELECT tope_ingresos FROM categorias_monotributo
+                       WHERE categoria=? AND estado='Vigente' ORDER BY vigencia_desde DESC LIMIT 1""",
+                    (client["categoria_actual"],),
+                )
+                limit_value = float(limit_row["tope_ingresos"] or 0) if limit_row else 0.0
+                self.database.execute(
+                    """INSERT INTO alertas_fiscales(cliente_id,periodo,tipo_alerta,descripcion,gravedad)
+                       VALUES(?,?,'categorias_monotributo_actualizadas',
+                       'Se importaron nuevos valores de Monotributo. Revisar categoría y pago mensual.','media')""",
+                    (client_id, period),
+                )
+                if maximum and revenue > maximum:
+                    self.database.execute(
+                        """INSERT INTO alertas_fiscales(cliente_id,periodo,tipo_alerta,descripcion,
+                           importe_relacionado,gravedad) VALUES(?,?,'exclusion_monotributo',
+                           'Los ingresos superan el límite de la categoría máxima.',?,'alta')""",
+                        (client_id, period, revenue),
+                    )
+                elif limit_value and revenue >= limit_value * .80:
+                    percentage = revenue / limit_value
+                    self.database.execute(
+                        """INSERT INTO alertas_fiscales(cliente_id,periodo,tipo_alerta,descripcion,
+                           importe_relacionado,gravedad) VALUES(?,?,'limite_categoria_actualizado',?,?,?)""",
+                        (client_id, period, f"Ingresos al {percentage*100:.1f}% del nuevo límite de categoría.", revenue,
+                         "alta" if percentage >= .90 else "media"),
+                    )
+                if not self.database.query_one(
+                    "SELECT id FROM tareas WHERE cliente_id=? AND titulo='Revisar nuevos valores de Monotributo' AND estado='pendiente'",
+                    (client_id,),
+                ):
+                    self.database.execute(
+                        """INSERT INTO tareas(cliente_id,modulo,periodo,titulo,descripcion,responsable,
+                           estado,prioridad) VALUES(?,'Monotributo',?,'Revisar nuevos valores de Monotributo',
+                           'Controlar categoría sugerida, riesgo de exclusión y nuevo importe mensual.',
+                           'NATALIA','pendiente','alta')""", (client_id, period),
+                    )
         return {"import_id": import_id, "imported": imported, "duplicates": duplicates, "review": review}
 
     def list_versions(self, only_current: bool = False) -> list[dict]:
@@ -158,6 +217,16 @@ class MonotributoCategoriesService:
                 WHEN 'D' THEN 4 WHEN 'E' THEN 5 WHEN 'F' THEN 6 WHEN 'G' THEN 7
                 WHEN 'H' THEN 8 WHEN 'I' THEN 9 WHEN 'J' THEN 10 ELSE 11 END"""
         )]
+
+    def save_manual(self, values: dict) -> dict:
+        record = {"categoria": values.get("categoria", "A"),
+                  "vigencia_desde": values.get("vigencia_desde") or date.today().isoformat(),
+                  "estado": values.get("estado", "Vigente"), "fuente": "Carga manual",
+                  "archivo_origen": "Carga manual", "confianza": "Alta", "accion": "Importar",
+                  "observaciones": values.get("observaciones", "")}
+        record.update({field: float(values.get(field, 0) or 0) for field in self.FIELDS})
+        return self.import_preview({"path": "Carga manual", "vigencia": record["vigencia_desde"],
+                                    "records": [record], "referencias": "", "text_length": 0}, "replace")
 
     def update(self, category_id: int, values: dict, responsible: str = "NATALIA", reason: str = "") -> None:
         current = self.database.query_one("SELECT * FROM categorias_monotributo WHERE id=?", (category_id,))
@@ -172,6 +241,14 @@ class MonotributoCategoriesService:
                 f"UPDATE categorias_monotributo SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
                 (*changes.values(), category_id),
             )
+
+    def change_history(self, category_id: int | None = None) -> list[dict]:
+        condition="WHERE h.categoria_id=?" if category_id else "";params=(category_id,) if category_id else ()
+        return [dict(row) for row in self.database.query(
+            f"""SELECT h.id,c.categoria,c.vigencia_desde,h.campo,h.valor_anterior,
+               h.valor_nuevo,h.responsable,h.motivo,h.fecha
+               FROM historial_categorias_monotributo h JOIN categorias_monotributo c ON c.id=h.categoria_id
+               {condition} ORDER BY h.fecha DESC""",params)]
             connection.executemany(
                 """INSERT INTO historial_categorias_monotributo(
                        categoria_id,campo,valor_anterior,valor_nuevo,responsable,motivo)

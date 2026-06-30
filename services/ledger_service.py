@@ -74,6 +74,26 @@ class LedgerService:
             field("impuesto", "Impuesto / régimen", ("Monotributo", "IVA", "Ganancias personas humanas", "Ganancias sociedades", "Autónomos", "Bienes personales", "Empleador", "Seguridad social", "Regímenes de información", "Retenciones / percepciones", "Otros")), field("estado", "Estado", ("Activo", "Pendiente", "Baja", "No corresponde", "A revisar")), field("fecha_alta", "Fecha alta"),
             field("categoria_monotributo", "Categoría monotributo", ("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "No corresponde", "A revisar")), field("riesgo_exclusion", "Riesgo de exclusión", ("Bajo", "Medio", "Alto", "Excluido", "A revisar", "No corresponde")), field("estado_monotributo", "Estado monotributo", ("Activo", "Baja", "Excluido", "Suspendido", "No corresponde", "A revisar")),
             field("factura_a", "Factura A", ("Autorizada", "No autorizada", "Factura M", "Sujeta a evaluación", "No corresponde")), field("libro_iva_digital", "Libro IVA Digital", ("Presentado", "Pendiente", "Vencido", "No corresponde", "A revisar")), field("estado_control", "Estado del control", ("OK", "Revisar", "Urgente", "Pendiente", "No corresponde")), field("deuda", "Deuda", ("Sin deuda detectada", "Con deuda", "En plan", "A revisar", "No corresponde")), field("ddjj_pendientes", "DDJJ pendientes", ("No", "Sí", "A revisar", "No corresponde")), field("notificaciones_dfe", "Notificaciones DFE", ("Sin pendientes", "Pendientes", "Urgentes", "A revisar")), field("ultimo_control", "Último control"), field("resultado_control", "Resultado"), field("proximo_paso", "Próximo paso"), field("observaciones", "Observaciones"),
+            field("fecha_inscripcion_arca", "Fecha de inscripción ARCA"),field("mes_cierre", "Mes de cierre"),
+            field("dependencia", "Dependencia"),field("region", "Región"),field("tipo_inscripcion", "Tipo de inscripción"),
+            field("sistema_control", "Sistema de control"),field("segmento", "Segmento"),field("ultima_actualizacion", "Última actualización"),
+            field("foto_registrada", "Foto registrada"),field("firma_registrada", "Firma registrada"),field("huella_registrada", "Huella registrada"),
+        )),
+        "contactos_arca": ("Contactos ARCA", (
+            field("clase", "Clase", ("Email", "Teléfono")),field("valor", "Dirección / número"),
+            field("tipo", "Tipo"),field("estado", "Estado"),field("fecha_actualizacion", "Fecha actualización"),
+            field("principal", "Principal", ("Sí", "No")),field("observaciones", "Observaciones"),
+        )),
+        "domicilios_arca": ("Domicilios ARCA", (
+            field("tipo", "Tipo de domicilio"),field("estado", "Estado"),field("direccion", "Dirección"),
+            field("localidad", "Localidad"),field("codigo_postal", "Código postal"),field("provincia", "Provincia"),
+            field("nomenclado", "Nomenclado"),field("fecha_baja", "Fecha baja"),field("fecha_actualizacion", "Fecha actualización"),
+            field("coordenadas", "Coordenadas"),field("observaciones", "Observaciones"),
+        )),
+        "migratorios_arca": ("Datos Migratorios", (
+            field("tipo_residencia", "Tipo de residencia"),field("vencimiento_migratorio", "Vencimiento migratorio"),
+            field("documento_extranjero", "Documento extranjero"),field("fecha_actualizacion", "Fecha actualización"),
+            field("observaciones", "Observaciones"),
         )),
         "iibb_legajo": ("IIBB", (
             field("jurisdiccion", "Jurisdicción", ("Buenos Aires", "CABA", "Catamarca", "Chaco", "Chubut", "Córdoba", "Corrientes", "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja", "Mendoza", "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan", "San Luis", "Santa Cruz", "Santa Fe", "Santiago del Estero", "Tierra del Fuego", "Tucumán", "Otra")), field("regimen", "Régimen", ("Local", "Simplificado", "General", "Convenio Multilateral", "Exento", "No inscripto", "A revisar", "No corresponde")), field("actividad", "Actividad"), field("alicuota", "Alícuota"), field("estado", "Estado", ("Activo", "Baja", "En alta", "En regularización", "No inscripto", "No corresponde", "A revisar")), field("riesgo_fiscal", "Riesgo fiscal", ("Bajo", "Medio", "Alto", "Sin evaluar", "No corresponde")), field("estado_cm", "Estado Convenio Multilateral", ("Activo", "Pendiente de alta", "Baja", "En regularización", "No corresponde", "A revisar")), field("estado_control", "Estado del control", ("OK", "Revisar", "Urgente", "Pendiente", "No corresponde")), field("deuda", "Deuda", ("Sin deuda detectada", "Con deuda", "En plan", "A revisar", "No corresponde")), field("padrones", "Padrones", ("Controlado", "Pendiente", "A revisar", "No corresponde")), field("ultimo_control", "Último control"), field("observaciones", "Observaciones"),

@@ -46,6 +46,7 @@ class MonotributoView(ttk.Frame):
         ttk.Button(selector, text="Actualizar", command=self.refresh).pack(side="left")
         ttk.Button(selector, text="Importar categorías ARCA", command=self.import_categories).pack(side="left", padx=8)
         ttk.Button(selector,text="Historial categorías",command=self.open_categories_history).pack(side="left")
+        ttk.Button(selector,text="Cambios manuales",command=lambda:CategoryChangesDialog(self,self.app)).pack(side="left",padx=6)
 
         self.details = ttk.Notebook(self)
         self.details.pack(fill="both", expand=True)
@@ -121,6 +122,11 @@ class MonotributoView(ttk.Frame):
             if not selected:messagebox.showinfo("Seleccionar categoría","Seleccioná una categoría.",parent=self);return
             source=next(row for row in versions if row["id"]==int(selected[0]));ExistingCategoryDialog(self,self.app,source,self.refresh)
         ttk.Button(actions,text="Modificar categoría seleccionada",command=edit_existing).pack(side="left")
+        def add_manual():
+            row={"categoria":"A","vigencia_desde":date.today().isoformat(),"estado":"Vigente","fuente":"Carga manual","observaciones":""}
+            for field in self.app.monotributo_categories_service.FIELDS:row[field]=0
+            ManualCategoryDialog(self,self.app,row,self.refresh)
+        ttk.Button(actions,text="Agregar categoría manual",command=add_manual).pack(side="left",padx=6)
         tree.bind("<Double-1>",lambda _event:edit_existing())
 
     def _add_summary_tab(self, data: dict) -> None:
@@ -297,12 +303,15 @@ class MonotributoView(ttk.Frame):
     def _add_recat_tab(self, client_id: int) -> None:
         scroll=ScrollableFrame(self.details,padding=14);self.details.add(scroll,text="Recateg.");frame=scroll.content
         calc=self.app.recategorization_service.calculate(client_id)
-        for row,(label,key) in enumerate((("Cliente","cliente"),("Actividad fiscal","actividad_fiscal"),("Denominación","denominacion"),("Período desde","periodo_desde"),("Período hasta","periodo_hasta"),("Ventas 12 meses","ventas"),("Categoría actual","categoria_actual"),("Categoría sugerida","categoria_sugerida"),("Diferencia al tope","diferencia_tope"),("Estado","estado"))):
-            value=money(calc[key]) if key in ("ventas","diferencia_tope") else (display_period(calc[key]) if key.startswith("periodo") else calc[key]); ttk.Label(frame,text=label,font=("Segoe UI",9,"bold")).grid(row=row,column=0,sticky="w",pady=3); ttk.Label(frame,text=value).grid(row=row,column=1,sticky="w",padx=10)
+        display_fields=(("Cliente","cliente"),("Actividad fiscal","actividad_fiscal"),("Denominación","denominacion"),("Período desde","periodo_desde"),("Período hasta","periodo_hasta"),("Ventas 12 meses","ventas"),("Límite categoría actual","limite_categoria"),("Porcentaje utilizado","porcentaje_utilizado"),("Diferencia al límite","diferencia_tope"),("Límite categoría máxima","limite_maximo"),("Diferencia a categoría máxima","diferencia_maximo"),("Categoría actual","categoria_actual"),("Categoría sugerida","categoria_sugerida"),("Estado","estado"))
+        for row,(label,key) in enumerate(display_fields):
+            value=percentage(calc[key]) if key=="porcentaje_utilizado" else money(calc[key]) if key in ("ventas","limite_categoria","diferencia_tope","limite_maximo","diferencia_maximo") else (display_period(calc[key]) if key.startswith("periodo") else calc[key]); ttk.Label(frame,text=label,font=("Segoe UI",9,"bold")).grid(row=row,column=0,sticky="w",pady=3); ttk.Label(frame,text=value).grid(row=row,column=1,sticky="w",padx=10)
         extras={k:tk.StringVar(value="0") for k in ("alquileres","energia","superficie","precio_unitario_maximo")}
         for index,(key,var) in enumerate(extras.items()): ttk.Label(frame,text=key.replace("_"," ").title()).grid(row=index,column=2,sticky="w",padx=(25,0)); ttk.Entry(frame,textvariable=var).grid(row=index,column=3,padx=8,pady=3)
         def save():
-            try:self.app.recategorization_service.save(client_id,{k:float(v.get()) for k,v in extras.items()});messagebox.showinfo("Recategorización","Análisis guardado.")
+            try:
+                values={k:float(v.get().replace(",",".")) for k,v in extras.items()};result=self.app.recategorization_service.calculate(client_id,values);self.app.recategorization_service.save(client_id,values)
+                parameter_text="\n".join(f"{key.replace('_',' ').title()}: {item['estado']} ({item['actual']} / {item['limite']})" for key,item in result["controles_parametros"].items());messagebox.showinfo("Recategorización",f"Análisis guardado.\nEstado: {result['estado']}\n\n{parameter_text}")
             except Exception as error:messagebox.showerror("No se pudo guardar",str(error))
         ttk.Button(frame,text="Guardar análisis",style="Primary.TButton",command=save).grid(row=5,column=3,sticky="e",pady=8)
 
@@ -422,6 +431,19 @@ class MonotributoView(ttk.Frame):
         parent.columnconfigure(0, weight=1)
 
 
+class CategoryChangesDialog(tk.Toplevel):
+    def __init__(self,parent,app) -> None:
+        super().__init__(parent);self.app=app;self.title("Historial de cambios de categorías");fit_window(self,1000,520);self.transient(parent.winfo_toplevel());self.grab_set();body=ttk.Frame(self,padding=14);body.pack(fill="both",expand=True);actions=ttk.Frame(body);actions.pack(fill="x",pady=(0,6));ttk.Button(actions,text="Exportar Excel",command=lambda:self.export("xlsx")).pack(side="left");ttk.Button(actions,text="Exportar PDF",command=lambda:self.export("pdf")).pack(side="left",padx=5)
+        holder=ttk.Frame(body);holder.pack(fill="both",expand=True);columns=("categoria","vigencia_desde","campo","valor_anterior","valor_nuevo","responsable","motivo","fecha");self.tree=ttk.Treeview(holder,columns=columns,show="headings")
+        for c in columns:self.tree.heading(c,text=c.replace("_"," ").title());self.tree.column(c,width=125)
+        MonotributoView._add_tree_scrollbars(holder,self.tree);self.rows=app.monotributo_categories_service.change_history()
+        for row in self.rows:self.tree.insert("","end",values=tuple(display_date(row[c]) if c in ("vigencia_desde","fecha") else row[c] for c in columns))
+    def export(self,format_name):
+        extension=f".{format_name}";filename=filedialog.asksaveasfilename(parent=self,defaultextension=extension,filetypes=((format_name.upper(),f"*{extension}"),),initialfile=f"Historial cambios categorías{extension}")
+        if not filename:return
+        method=self.app.report_service.export_table_excel if format_name=="xlsx" else self.app.report_service.export_table_pdf;method(Path(filename),"Historial de cambios de categorías",self.rows,"Monotributo");messagebox.showinfo("Exportación terminada",f"Se creó:\n{filename}",parent=self)
+
+
 class CategoriesImportPreviewDialog(tk.Toplevel):
     def __init__(self,parent,app,preview:dict,callback) -> None:
         super().__init__(parent);self.app=app;self.preview=preview;self.callback=callback;self.title("Vista previa de categorías Monotributo ARCA");fit_window(self,1260,700);self.transient(parent.winfo_toplevel());self.grab_set()
@@ -431,7 +453,7 @@ class CategoriesImportPreviewDialog(tk.Toplevel):
         for c,l in zip(columns,labels):self.tree.heading(c,text=l);self.tree.column(c,width=95,minwidth=65)
         MonotributoView._add_tree_scrollbars(holder,self.tree)
         for index in range(len(preview["records"])):self.redraw(index)
-        controls=ttk.Frame(body);controls.pack(fill="x",pady=(9,0));ttk.Button(controls,text="Importar / no importar",command=self.toggle).pack(side="left");ttk.Button(controls,text="Editar seleccionado",command=self.edit).pack(side="left",padx=6);ttk.Button(controls,text="Cancelar",command=self.destroy).pack(side="right");ttk.Button(controls,text="Confirmar importación",style="Primary.TButton",command=self.confirm).pack(side="right",padx=6)
+        controls=ttk.Frame(body);controls.pack(fill="x",pady=(9,0));ttk.Button(controls,text="Importar / no importar",command=self.toggle).pack(side="left");ttk.Button(controls,text="Editar / mapear seleccionado",command=self.edit).pack(side="left",padx=6);ttk.Button(controls,text="Reintentar lectura",command=self.retry).pack(side="left");ttk.Button(controls,text="Cancelar",command=self.destroy).pack(side="right");ttk.Button(controls,text="Confirmar importación",style="Primary.TButton",command=self.confirm).pack(side="right",padx=6)
 
     def redraw(self,index:int):
         r=self.preview["records"][index];values=(r["accion"],r["categoria"],money(r["tope_ingresos"]),r["tope_superficie"],r["tope_energia"],money(r["tope_alquileres"]),money(r["precio_unitario_maximo"]),money(r["impuesto_integrado_servicios"]),money(r["impuesto_integrado_ventas"]),money(r["aporte_sipa"]),money(r["aporte_obra_social"]),money(r["total_servicios"]),money(r["total_ventas"]),r["confianza"])
@@ -444,6 +466,12 @@ class CategoriesImportPreviewDialog(tk.Toplevel):
     def edit(self):
         s=self.tree.selection()
         if s:CategoryPreviewRowDialog(self,self.preview["records"][int(s[0])],lambda:self.redraw(int(s[0])))
+    def retry(self):
+        try:
+            self.preview=self.app.monotributo_categories_service.preview_pdf(Path(self.preview["path"]));
+            for item in self.tree.get_children():self.tree.delete(item)
+            for index in range(len(self.preview["records"])):self.redraw(index)
+        except Exception as error:messagebox.showerror("No se pudo releer",str(error),parent=self)
     def confirm(self):
         existing=self.app.database.query_one("SELECT id FROM categorias_monotributo WHERE vigencia_desde=? LIMIT 1",(self.preview["vigencia"],));action="replace"
         if existing:
@@ -476,6 +504,12 @@ class ExistingCategoryDialog(CategoryPreviewRowDialog):
     def _persist(self) -> None:
         self.app.monotributo_categories_service.update(self.category_id,self.row,reason="Modificación manual desde Monotributo")
         self.external_callback()
+
+
+class ManualCategoryDialog(CategoryPreviewRowDialog):
+    def __init__(self,parent,app,row:dict,callback) -> None:
+        self.app=app;self.external_callback=callback;super().__init__(parent,row,self._persist);self.title("Agregar categoría manual")
+    def _persist(self):self.app.monotributo_categories_service.save_manual(self.row);self.external_callback()
 
 
 class ConvenioDialog(tk.Toplevel):

@@ -52,9 +52,27 @@ class AdministrativeService:
         return self._save(module, data)
 
     def update(self, module: str, record_id: int, data: dict) -> None:
-        if not self.get(module, record_id):
+        previous = self.get(module, record_id)
+        if not previous:
             raise ValueError("El registro seleccionado ya no existe.")
         self._save(module, data, record_id)
+        if module == "vencimientos":
+            current = self.get(module, record_id) or {}
+            audited = (
+                "cliente_id", "impuesto", "organismo", "periodo", "fecha_vencimiento",
+                "tipo_vencimiento", "estado", "importe", "saldo", "responsable", "observaciones",
+            )
+            changes = [
+                (record_id, current.get("cliente_id"), field, str(previous.get(field) or ""),
+                 str(current.get(field) or ""), data.get("responsable") or "NATALIA", "Modificación manual")
+                for field in audited if str(previous.get(field) or "") != str(current.get(field) or "")
+            ]
+            if changes:
+                self.database.executemany(
+                    """INSERT INTO historial_vencimientos(vencimiento_id,cliente_id,campo,
+                       valor_anterior,valor_nuevo,responsable,observaciones)
+                       VALUES(?,?,?,?,?,?,?)""", changes,
+                )
 
     def _save(self, module: str, data: dict, record_id: int | None = None) -> int:
         self._table(module)
@@ -162,6 +180,11 @@ class AdministrativeService:
         )
         if pending > amount:
             raise ValueError("El saldo pendiente no puede superar el importe total.")
+        paid = positive_number(data.get("importe_pagado") or max(amount-pending,0), "Importe pagado", allow_zero=True)
+        if paid > amount:
+            raise ValueError("El importe pagado no puede superar el importe total.")
+        if abs((amount-paid)-pending) > .01:
+            pending = max(amount-paid,0)
         period = normalize_period(data["periodo"]) if data.get("periodo") else ""
         duplicate = self.database.query_one(
             """SELECT id FROM honorarios WHERE cliente_id=? AND servicio=? AND periodo=?
@@ -175,19 +198,23 @@ class AdministrativeService:
             period, amount, data["estado"],
             data.get("fecha_emision") or None, data.get("fecha_cobro") or None,
             data.get("medio_pago", ""), pending, data.get("observaciones", ""),
+            data.get("tipo_registro") or "Honorario",data.get("fecha_vencimiento") or None,
+            paid,data.get("numero_comprobante", ""),
         )
         if record_id:
             self.database.execute(
                 """UPDATE honorarios SET cliente_id=?, servicio=?, periodo=?, importe=?,
                    estado=?, fecha_emision=?, fecha_cobro=?, medio_pago=?,
-                   saldo_pendiente=?, observaciones=? WHERE id=?""",
+                   saldo_pendiente=?, observaciones=?,tipo_registro=?,fecha_vencimiento=?,
+                   importe_pagado=?,numero_comprobante=?,actualizado_en=CURRENT_TIMESTAMP WHERE id=?""",
                 (*values, record_id),
             )
             return record_id
         return self.database.execute(
             """INSERT INTO honorarios(cliente_id, servicio, periodo, importe, estado,
-               fecha_emision, fecha_cobro, medio_pago, saldo_pendiente, observaciones)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               fecha_emision, fecha_cobro, medio_pago, saldo_pendiente, observaciones,
+               tipo_registro,fecha_vencimiento,importe_pagado,numero_comprobante)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             values,
         )
 

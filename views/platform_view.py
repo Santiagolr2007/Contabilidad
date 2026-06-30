@@ -5,7 +5,7 @@ import tempfile
 import tkinter as tk
 from datetime import date
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from utils.formatters import display_date, display_period, money, number_ar
 
@@ -67,6 +67,7 @@ class BasePlatformPanel(ttk.Frame):
         self.clients = {f"{row['nombre_razon_social']} · {row['cuit_cuil']}": int(row["id"]) for row in clients}
         self.client = tk.StringVar(value=next(iter(self.clients), ""))
         self.period = tk.StringVar(); self.search = tk.StringVar(); self.kind = tk.StringVar(value="Todos")
+        self.year=tk.StringVar();self.month=tk.StringVar();self.minimum=tk.StringVar(value="0");self.state_filter=tk.StringVar(value="Todos");self.province=tk.StringVar();self.product_filter=tk.StringVar()
         self.tables: dict[str, DynamicTable] = {}
         self.current_rows: dict[str, list[dict]] = {}
 
@@ -136,10 +137,14 @@ class MercadoPagoPanel(BasePlatformPanel):
             ("Ingreso / Egreso", ttk.Combobox(filters, textvariable=self.direction, values=("Todos", "Ingreso", "Egreso"), state="readonly", width=10)),
             ("Buscar", ttk.Entry(filters, textvariable=self.search, width=18)),
             ("Significativo desde", ttk.Entry(filters, textvariable=self.threshold, width=11)),
+            ("Año",ttk.Entry(filters,textvariable=self.year,width=7)),
+            ("Mes",ttk.Entry(filters,textvariable=self.month,width=5)),
+            ("Importe mínimo",ttk.Entry(filters,textvariable=self.minimum,width=11)),
+            ("Estado",ttk.Entry(filters,textvariable=self.state_filter,width=12)),
         )):
             row, column = divmod(index, 3); base = column * 2
             ttk.Label(filters, text=label).grid(row=row, column=base, sticky="w", padx=(5,2), pady=2); widget.grid(row=row, column=base+1, sticky="ew", padx=(0,8), pady=2); filters.columnconfigure(base+1, weight=1)
-        ttk.Button(filters, text="Filtrar", command=self.refresh).grid(row=1, column=6, padx=5)
+        ttk.Button(filters, text="Filtrar", command=self.refresh).grid(row=3, column=6, padx=5)
         self.notebook = ttk.Notebook(self); self.notebook.pack(fill="both", expand=True)
         for title in self.SUBTABS: self.create_table_tab(self.notebook, title)
         self.refresh()
@@ -150,19 +155,13 @@ class MercadoPagoPanel(BasePlatformPanel):
         filename = filedialog.askopenfilename(parent=self, filetypes=(("Excel o CSV", "*.xls *.xlsx *.csv"),))
         if not filename: return
         try:
-            if self.app.platform_service.was_imported(client_id, Path(filename), "Mercado Pago") and not messagebox.askyesno("Archivo ya importado", "Este archivo ya figura en el historial. Podés reimportarlo; los movimientos duplicados se omitirán. ¿Continuar?", parent=self): return
             preview=self.app.platform_service.preview_file(Path(filename),"mp")
             mapping = self.mapping_for(filename)
             if mapping is None: return
-            summary="\n".join(f"{key.replace('_',' ').title()}: {number_ar(value)}" for key,value in preview.get("summary",{}).items()) or "Sin resumen superior"
-            if not messagebox.askyesno("Vista previa Mercado Pago",f"Hoja: {preview['sheet']}\nFila de encabezado: {preview['header_row']}\nMovimientos detectados: {preview['rows']}\n{summary}\n\n¿Confirmar importación?",parent=self):return
-            duplicate="skip"
-            if self.app.platform_service.was_imported(client_id, Path(filename), "Mercado Pago"):
-                answer=messagebox.askyesnocancel("Duplicados","¿Reemplazar movimientos duplicados?\nSí: reemplazar · No: omitir · Cancelar: volver",parent=self)
-                if answer is None:return
-                duplicate="replace" if answer else "skip"
-            result = self.app.platform_service.import_mercado_pago(Path(filename), client_id, mapping, duplicate)
-            self.refresh(); messagebox.showinfo("Importación Mercado Pago", f"Leídos: {result['read']}\nImportados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nRechazados: {result['rejected']}", parent=self)
+            def confirm(options):
+                result=self.app.platform_service.import_mercado_pago(Path(filename),client_id,options["mapping"],options["duplicate_action"],options["header_row"],options["sheet"],options["selected_rows"],options["row_overrides"])
+                self.refresh();messagebox.showinfo("Importación Mercado Pago",f"Leídos: {result['read']}\nImportados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nRechazados: {result['rejected']}",parent=self)
+            PlatformImportPreviewDialog(self,self.app,Path(filename),"mp",preview,mapping,confirm)
         except Exception as error: messagebox.showerror("No se pudo importar", str(error), parent=self)
 
     def refresh(self) -> None:
@@ -171,10 +170,11 @@ class MercadoPagoPanel(BasePlatformPanel):
             for title, table in self.tables.items(): self.current_rows[title] = []; table.fill([])
             return
         try:
-            rows = self.app.platform_service.list_mp(client_id, self.period.get().strip(), self.kind.get(), self.direction.get(), self.search.get().strip())
+            minimum=float(self.minimum.get().replace(".","").replace(",",".") or 0)
+            rows = self.app.platform_service.list_mp(client_id, self.period.get().strip(), self.kind.get(), self.direction.get(), self.search.get().strip(),self.year.get().strip(),self.month.get().strip(),minimum,self.state_filter.get().strip())
         except ValueError as error:
             messagebox.showerror("Filtro inválido", str(error), parent=self); return
-        summary = self.app.platform_service.mp_summary(client_id)
+        summary = self.app.platform_service.mp_summary_rows(rows)
         try:
             text = self.threshold.get().replace(".", "").replace(",", "."); threshold = float(text)
         except ValueError: threshold = 1000.0
@@ -239,10 +239,16 @@ class MercadoLibrePanel(BasePlatformPanel):
             ("Tipo", ttk.Combobox(filters, textvariable=self.kind, values=("Todos", "Venta", "Compra", "Nota de crédito", "Anulación"), state="readonly", width=17)),
             ("Buscar", ttk.Entry(filters, textvariable=self.search, width=20)),
             ("Significativo desde", ttk.Entry(filters, textvariable=self.threshold, width=13)),
+            ("Año",ttk.Entry(filters,textvariable=self.year,width=7)),
+            ("Mes",ttk.Entry(filters,textvariable=self.month,width=5)),
+            ("Importe mínimo",ttk.Entry(filters,textvariable=self.minimum,width=11)),
+            ("Estado",ttk.Entry(filters,textvariable=self.state_filter,width=13)),
+            ("Producto",ttk.Entry(filters,textvariable=self.product_filter,width=15)),
+            ("Provincia",ttk.Entry(filters,textvariable=self.province,width=15)),
         )):
             row, column = divmod(index, 3); base = column * 2
             ttk.Label(filters, text=label).grid(row=row, column=base, sticky="w", padx=(6,2), pady=2); widget.grid(row=row, column=base+1, sticky="ew", padx=(0,8), pady=2); filters.columnconfigure(base+1, weight=1)
-        ttk.Button(filters, text="Filtrar", command=self.refresh).grid(row=1, column=4, padx=6)
+        ttk.Button(filters, text="Filtrar", command=self.refresh).grid(row=3, column=6, padx=6)
         self.notebook = ttk.Notebook(self); self.notebook.pack(fill="both", expand=True)
         for title in self.SUBTABS: self.create_table_tab(self.notebook, title)
         self.refresh()
@@ -253,18 +259,13 @@ class MercadoLibrePanel(BasePlatformPanel):
         filename = filedialog.askopenfilename(parent=self, filetypes=(("Excel o CSV", "*.xls *.xlsx *.csv"),))
         if not filename: return
         try:
-            if self.app.platform_service.was_imported(client_id, Path(filename), "Mercado Libre") and not messagebox.askyesno("Archivo ya importado", "Este archivo ya figura en el historial. Podés reimportarlo; las operaciones duplicadas se omitirán. ¿Continuar?", parent=self): return
             preview=self.app.platform_service.preview_file(Path(filename),"ml")
             mapping = self.mapping_for(filename)
             if mapping is None: return
-            if not messagebox.askyesno("Vista previa Mercado Libre",f"Hoja: {preview['sheet']}\nFila de encabezado: {preview['header_row']}\nOperaciones detectadas: {preview['rows']}\nColumnas reconocidas: {len(preview['mapping'])}\nColumnas sin reconocer: {len(preview['columns'])-len(set(preview['mapping'].values()))}\n\n¿Confirmar importación?",parent=self):return
-            duplicate="skip"
-            if self.app.platform_service.was_imported(client_id, Path(filename), "Mercado Libre"):
-                answer=messagebox.askyesnocancel("Duplicados","¿Reemplazar operaciones duplicadas?\nSí: reemplazar · No: omitir · Cancelar: volver",parent=self)
-                if answer is None:return
-                duplicate="replace" if answer else "skip"
-            result = self.app.platform_service.import_mercado_libre(Path(filename), client_id, source_kind, mapping, duplicate)
-            self.refresh(); messagebox.showinfo("Importación Mercado Libre", f"Leídos: {result['read']}\nImportados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nRechazados: {result['rejected']}", parent=self)
+            def confirm(options):
+                result=self.app.platform_service.import_mercado_libre(Path(filename),client_id,source_kind,options["mapping"],options["duplicate_action"],options["header_row"],options["sheet"],options["selected_rows"],options["row_overrides"])
+                self.refresh();messagebox.showinfo("Importación Mercado Libre",f"Leídos: {result['read']}\nImportados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nRechazados: {result['rejected']}",parent=self)
+            PlatformImportPreviewDialog(self,self.app,Path(filename),"ml",preview,mapping,confirm)
         except Exception as error: messagebox.showerror("No se pudo importar", str(error), parent=self)
 
     def refresh(self) -> None:
@@ -272,15 +273,17 @@ class MercadoLibrePanel(BasePlatformPanel):
         if not client_id:
             for title, table in self.tables.items(): self.current_rows[title] = []; table.fill([])
             return
-        try: rows = self.app.platform_service.list_ml(client_id, self.period.get().strip(), self.kind.get(), self.search.get().strip())
+        try:
+            minimum=float(self.minimum.get().replace(".","").replace(",",".") or 0)
+            rows = self.app.platform_service.list_ml(client_id, self.period.get().strip(), self.kind.get(), self.search.get().strip(),self.year.get().strip(),self.month.get().strip(),minimum,self.state_filter.get().strip(),self.province.get().strip(),self.product_filter.get().strip())
         except ValueError as error: messagebox.showerror("Filtro inválido", str(error), parent=self); return
         try: threshold = float(self.threshold.get().replace(".", "").replace(",", "."))
         except ValueError: threshold = 500000.0
-        products = self.app.platform_service.ml_products(client_id); counterparts = self.app.platform_service.ml_buyers(client_id)
+        products = self._group(rows,"producto"); counterparts = self._group(rows,"contraparte")
         assignments = {
             "Todas las operaciones": rows, "Ventas Mercado Libre": [r for r in rows if r["tipo_operacion"] == "Venta"],
             "Compras Mercado Libre": [r for r in rows if r["tipo_operacion"] == "Compra"], "Notas de Crédito": [r for r in rows if r["tipo_operacion"] == "Nota de crédito"],
-            "Anulaciones / Devoluciones": [r for r in rows if r["tipo_operacion"] in ("Anulación", "Devolución")], "Resumen Mensual": self.app.platform_service.ml_summary(client_id),
+            "Anulaciones / Devoluciones": [r for r in rows if r["tipo_operacion"] in ("Anulación", "Devolución")], "Resumen Mensual": self.app.platform_service.ml_summary_rows(rows),
             "Ventas con reclamo": [r for r in rows if r.get("estado_especial")=="Venta con reclamo"], "Ventas con mediación": [r for r in rows if r.get("estado_especial")=="Venta con mediación"],
             "Productos": products, "Compradores": counterparts, "Ventas por provincia": self._group(rows,"provincia"), "Proveedores / vendedores principales": self._group([r for r in rows if r["tipo_operacion"]=="Compra"],"contraparte"),
             "Operaciones significativas": [r for r in rows if abs(float(r["importe_neto"] or 0)) >= threshold], "Operaciones en USD": [r for r in rows if str(r["moneda"]).upper() not in ("ARS", "$", "PESOS")],
@@ -312,6 +315,59 @@ class MercadoLibrePanel(BasePlatformPanel):
         client_id = self.client_id()
         if client_id and messagebox.askyesno("Confirmar limpieza", "¿Borrar todas las operaciones de Mercado Libre del cliente? Esta acción no se puede deshacer.", parent=self):
             deleted = self.app.platform_service.delete_all("ml", client_id); self.refresh(); messagebox.showinfo("Datos eliminados", f"Se eliminaron {deleted} operaciones.", parent=self)
+
+
+class PlatformImportPreviewDialog(tk.Toplevel):
+    def __init__(self,parent,app,path:Path,source:str,preview:dict,manual_mapping:dict,callback) -> None:
+        super().__init__(parent);self.app=app;self.path=path;self.source=source;self.preview=preview;self.manual_mapping=dict(manual_mapping);self.callback=callback;self.row_overrides={};self.title("Vista previa de importación");fit_window(self,1250,720);self.transient(parent.winfo_toplevel());self.grab_set()
+        body=ttk.Frame(self,padding=14);body.pack(fill="both",expand=True);ttk.Label(body,text="Vista previa antes de guardar",style="Title.TLabel").pack(anchor="w");self.info=tk.StringVar();ttk.Label(body,textvariable=self.info,style="Subtitle.TLabel").pack(anchor="w",pady=(2,7))
+        top=ttk.Frame(body);top.pack(fill="x",pady=(0,6));ttk.Label(top,text="Duplicados").pack(side="left");self.duplicate=tk.StringVar(value="skip");ttk.Combobox(top,textvariable=self.duplicate,values=("skip","replace","import"),state="readonly",width=12).pack(side="left",padx=6);ttk.Label(top,text="skip=omitir · replace=reemplazar · import=marcar posible duplicado",style="Subtitle.TLabel").pack(side="left")
+        ttk.Button(top,text="Cambiar fila de encabezado",command=self.change_header).pack(side="right");ttk.Button(top,text="Mapear columnas",command=self.remap).pack(side="right",padx=6);ttk.Button(top,text="Reintentar lectura",command=self.retry).pack(side="right")
+        self.summary=ttk.LabelFrame(body,text="Resumen superior detectado",padding=7);self.summary.pack(fill="x",pady=(0,6));self.summary_label=ttk.Label(self.summary);self.summary_label.pack(anchor="w")
+        holder=ttk.Frame(body);holder.pack(fill="both",expand=True);self.tree=ttk.Treeview(holder,show="headings",selectmode="extended");sy=ttk.Scrollbar(holder,orient="vertical",command=self.tree.yview);sx=ttk.Scrollbar(holder,orient="horizontal",command=self.tree.xview);self.tree.configure(yscrollcommand=sy.set,xscrollcommand=sx.set);self.tree.grid(row=0,column=0,sticky="nsew");sy.grid(row=0,column=1,sticky="ns");sx.grid(row=1,column=0,sticky="ew");holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1);self.tree.bind("<Double-1>",lambda _event:self.edit_row())
+        actions=ttk.Frame(body);actions.pack(fill="x",pady=(8,0));ttk.Button(actions,text="Editar fila seleccionada",command=self.edit_row).pack(side="left");ttk.Button(actions,text="Cancelar",command=self.destroy).pack(side="right");ttk.Button(actions,text="Importar todo",style="Primary.TButton",command=lambda:self.confirm(False)).pack(side="right",padx=6);ttk.Button(actions,text="Importar solo seleccionadas",command=lambda:self.confirm(True)).pack(side="right")
+        self.fill()
+    def fill(self):
+        p=self.preview;self.info.set(f"Archivo: {self.path.name} · Hoja: {p['sheet']} · Encabezado: fila {p['header_row']} · Registros: {p['rows']} · Columnas reconocidas: {len(p['mapping'])} · Sin reconocer: {len(p['columns'])-len(set(p['mapping'].values()))}")
+        summary=p.get("summary",{});self.summary_label.configure(text=" · ".join(f"{key.replace('_',' ').title()}: {number_ar(value)}" for key,value in summary.items()) or "No se detectó resumen superior")
+        columns=tuple(column for column in p["columns"] if not str(column).startswith("__"));self.tree.configure(columns=columns)
+        for column in columns:self.tree.heading(column,text=str(column));self.tree.column(column,width=145,minwidth=80)
+        for item in self.tree.get_children():self.tree.delete(item)
+        for row in p["preview"]:
+            index=int(row["_source_index"]);values=self.row_overrides.get(index,row);self.tree.insert("","end",iid=str(index),values=[formatted(str(column),values.get(column,"")) for column in columns])
+        self.tree.selection_set(self.tree.get_children())
+    def change_header(self):
+        value=simpledialog.askinteger("Fila de encabezado","Ingresá el número de fila que contiene los encabezados:",parent=self,initialvalue=self.preview["header_row"],minvalue=1)
+        if value is None:return
+        try:self.preview=self.app.platform_service.preview_file(self.path,self.source,value,self.preview["sheet"]);self.row_overrides={};self.fill()
+        except Exception as error:messagebox.showerror("Encabezado inválido",str(error),parent=self)
+    def retry(self):
+        try:self.preview=self.app.platform_service.preview_file(self.path,self.source);self.row_overrides={};self.fill()
+        except Exception as error:messagebox.showerror("No se pudo releer",str(error),parent=self)
+    def remap(self):
+        aliases=self.app.platform_service.MP_ALIASES if self.source=="mp" else self.app.platform_service.ML_ALIASES
+        field=simpledialog.askstring("Campo interno","Escribí el campo interno a mapear.\nOpciones: "+", ".join(aliases),parent=self)
+        if not field:return
+        if field not in aliases:messagebox.showerror("Campo inválido","El campo interno no existe.",parent=self);return
+        dialog=PlatformMappingDialog(self,[field],self.preview["columns"]);self.wait_window(dialog)
+        if dialog.result:self.manual_mapping.update(dialog.result)
+    def edit_row(self):
+        selected=self.tree.selection()
+        if not selected:messagebox.showinfo("Seleccionar fila","Seleccioná una fila.",parent=self);return
+        index=int(selected[0]);source=next(row for row in self.preview["preview"] if int(row["_source_index"])==index);row=self.row_overrides.setdefault(index,{key:value for key,value in source.items() if key!="_source_index"});PlatformPreviewRowDialog(self,row,self.fill)
+    def confirm(self,selected_only:bool):
+        selected={int(item) for item in self.tree.selection()} if selected_only else None
+        if selected_only and not selected:messagebox.showinfo("Seleccionar filas","Seleccioná al menos una fila.",parent=self);return
+        try:self.callback({"mapping":self.manual_mapping,"duplicate_action":self.duplicate.get(),"header_row":self.preview["header_row"],"sheet":self.preview["sheet"],"selected_rows":selected,"row_overrides":self.row_overrides});self.destroy()
+        except Exception as error:messagebox.showerror("No se pudo importar",str(error),parent=self)
+
+
+class PlatformPreviewRowDialog(tk.Toplevel):
+    def __init__(self,parent,row:dict,callback) -> None:
+        super().__init__(parent);self.row=row;self.callback=callback;self.title("Editar fila antes de importar");fit_window(self,700,650);self.transient(parent);self.grab_set();frame=ttk.Frame(self,padding=16);frame.pack(fill="both",expand=True);canvas=tk.Canvas(frame,highlightthickness=0);scroll=ttk.Scrollbar(frame,orient="vertical",command=canvas.yview);body=ttk.Frame(canvas);body.bind("<Configure>",lambda _event:canvas.configure(scrollregion=canvas.bbox("all")));canvas.create_window((0,0),window=body,anchor="nw");canvas.configure(yscrollcommand=scroll.set);canvas.pack(side="left",fill="both",expand=True);scroll.pack(side="right",fill="y");self.vars={}
+        for index,(key,value) in enumerate(row.items()):self.vars[key]=tk.StringVar(value=str(value));ttk.Label(body,text=str(key)).grid(row=index,column=0,sticky="w",pady=3);ttk.Entry(body,textvariable=self.vars[key],width=55).grid(row=index,column=1,sticky="ew",padx=8,pady=3)
+        body.columnconfigure(1,weight=1);ttk.Button(body,text="Guardar cambios",style="Primary.TButton",command=self.save).grid(row=len(row),column=1,sticky="e",pady=10)
+    def save(self):self.row.update({key:value.get() for key,value in self.vars.items()});self.callback();self.destroy()
 
 
 class PlatformMappingDialog(tk.Toplevel):
