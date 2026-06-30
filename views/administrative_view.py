@@ -4,13 +4,14 @@ import tkinter as tk
 import os
 from datetime import date, timedelta
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from models import Client, FiscalProfile
 from utils.formatters import display_date, display_period, money, normalize_date
 
-from .common import ScrollableFrame, fit_window, selected_tree_id
+from .common import ScrollableFrame, fit_window, make_tree_sortable, selected_tree_id
 from .date_widgets import DateEntry
+from .ledger_view import ClientLedgerDialog
 
 
 DEFINITIONS = {
@@ -26,18 +27,20 @@ DEFINITIONS = {
         ),
     ),
     "tareas": (
-        "Tareas y trabajos",
+        "Tareas",
         (
-            ("modulo", "Módulo", "text"),
+            ("modulo", "Área", "text"),
             ("periodo", "Período", "text"),
-            ("titulo", "Título", "text"),
+            ("titulo", "Tipo de tarea / evento", "text"),
             ("descripcion", "Descripción", "text"),
-            ("responsable", "Responsable", "text"),
-            ("fecha_inicio", "Fecha inicio", "date"),
-            ("fecha_vencimiento", "Vencimiento", "date"),
-            ("fecha_finalizacion", "Finalización", "date"),
-            ("estado", "Estado", ("pendiente", "esperando documentación", "en proceso", "para revisar", "finalizado", "facturado", "cobrado", "archivado")),
-            ("prioridad", "Prioridad", ("baja", "media", "alta")),
+            ("fecha_inicio", "Fecha", "date"),
+            ("fecha_vencimiento", "Fecha de vencimiento", "date"),
+            ("fecha_cumplimiento", "Fecha de cumplimiento", "date"),
+            ("estado", "Estado", ("Pendiente", "En proceso", "Esperando cliente", "Esperando organismo", "Cumplimentada", "Vencida", "Cancelada", "No corresponde")),
+            ("prioridad", "Prioridad", ("Baja", "Media", "Alta", "Urgente")),
+            ("medio", "Medio", "text"),
+            ("documentacion_vinculada", "Documentación vinculada", "text"),
+            ("proximo_paso", "Próximo paso", "text"),
             ("observaciones", "Observaciones", "text"),
         ),
     ),
@@ -49,30 +52,33 @@ DEFINITIONS = {
             ("periodo", "Período MM/AAAA", "text"),
             ("fecha_vencimiento", "Fecha vencimiento", "date"),
             ("tipo_vencimiento", "Tipo de vencimiento", ("multi", "Presentación", "Pago", "Renovación", "Recategorización", "Alta", "Baja", "Modificación", "Informe", "Control", "Reunión", "Respuesta a intimación", "Vencimiento de certificado", "Vencimiento contractual", "Otro")),
-            ("estado", "Estado", ("pendiente", "presentado", "pagado", "vencido", "A revisar", "No corresponde")),
+            ("estado", "Estado", ("Pendiente", "Cumplido", "Pagado", "Vencido", "No corresponde")),
             ("importe", "Importe", "text"),
             ("saldo", "Saldo", "text"),
             ("fecha_presentacion", "Fecha presentación", "date"),
+            ("fecha_cumplimiento", "Fecha cumplimiento", "date"),
             ("fecha_pago", "Fecha pago", "date"),
-            ("responsable", "Responsable", "text"),
             ("observaciones", "Observaciones", "text"),
         ),
     ),
     "honorarios": (
-        "Honorarios",
+        "Honorarios - pagos al estudio",
         (
             ("tipo_registro", "Tipo de registro", ("Honorario", "Presupuesto", "Pago", "Abono mensual", "Trabajo extraordinario")),
-            ("servicio", "Servicio", "text"),
+            ("servicio", "Concepto / servicio", ("Alta inicial", "Abono mensual", "Liquidación mensual", "Presentación anual", "Regularización fiscal", "Regularización impositiva", "Fiscalización", "Moratoria / plan de pago", "Alta ARCA", "Alta IIBB", "Alta municipal", "Alta empleador", "Sueldos", "Casas particulares", "Societario", "Certificación", "Informe", "Consulta", "Otro")),
             ("periodo", "Período MM/AAAA", "text"),
-            ("importe", "Importe", "text"),
-            ("estado", "Estado", ("pendiente de facturar", "facturado", "pendiente de cobro", "cobrado parcial", "cobrado total", "vencido")),
-            ("fecha_emision", "Fecha emisión", "date"),
-            ("fecha_cobro", "Fecha cobro", "date"),
-            ("fecha_vencimiento", "Fecha vencimiento", "date"),
-            ("importe_pagado", "Importe pagado", "text"),
-            ("numero_comprobante", "Número de comprobante", "text"),
-            ("medio_pago", "Medio de pago", "text"),
+            ("importe", "Importe presupuestado / facturado", "text"),
+            ("importe_pagado", "Importe cobrado", "text"),
             ("saldo_pendiente", "Saldo pendiente", "text"),
+            ("estado", "Estado de cobro", ("Pendiente", "Cobrado", "Cobro parcial", "Vencido", "Bonificado", "Anulado", "No corresponde")),
+            ("fecha_emision", "Fecha emisión", "date"),
+            ("fecha_vencimiento", "Fecha vencimiento", "date"),
+            ("fecha_cobro", "Fecha cobro", "date"),
+            ("medio_pago", "Medio de cobro", "text"),
+            ("comprobante_emitido", "Comprobante emitido", ("Sí", "No", "No corresponde")),
+            ("tipo_comprobante", "Tipo de comprobante", "text"),
+            ("numero_comprobante", "Número de comprobante", "text"),
+            ("condiciones_presupuesto", "Condiciones del presupuesto", "text"),
             ("observaciones", "Observaciones", "text"),
         ),
     ),
@@ -104,44 +110,85 @@ class AdministrativeView(ttk.Frame):
             ttk.Button(toolbar, text="Eliminar", command=self.delete).pack(
                 side="left", padx=(8, 0)
             )
-        if module in ("vencimientos", "honorarios"):
+        if module in ("tareas", "vencimientos", "honorarios"):
             ttk.Button(toolbar, text="Exportar Excel", command=lambda: self.export("xlsx")).pack(side="left", padx=(8,0))
             ttk.Button(toolbar, text="Exportar PDF", command=lambda: self.export("pdf")).pack(side="left", padx=(5,0))
             ttk.Button(toolbar, text="Imprimir", command=lambda: self.export("pdf", True)).pack(side="left", padx=(5,0))
+            ttk.Button(toolbar, text="Abrir legajo", command=self.open_ledger).pack(side="left", padx=(8,0))
         if module == "vencimientos":
             ttk.Button(toolbar, text="Importar vencimientos ARCA", command=self.import_arca).pack(side="left", padx=(8, 0))
-            ttk.Button(toolbar, text="Historial ARCA", command=lambda: AccountingImportHistoryDialog(self, self.app, "ARCA Vencimientos")).pack(side="left", padx=(5, 0))
         ttk.Button(toolbar, text="Actualizar", command=self.refresh).pack(side="right")
+
+        if module in ("tareas", "vencimientos", "honorarios"):
+            status_bar = ttk.LabelFrame(self, text="Acciones sobre el registro seleccionado", padding=6)
+            status_bar.pack(fill="x", pady=(0, 8))
+            actions = {
+                "tareas": ("Cumplimentada", "Pendiente", "En proceso", "Vencida", "Cancelada", "No corresponde"),
+                "vencimientos": ("Cumplido", "Pagado", "Pendiente", "Vencido", "No corresponde"),
+                "honorarios": ("Cobrado", "Cobro parcial", "Pendiente", "Vencido", "Bonificado", "Anulado", "No corresponde"),
+            }[module]
+            for status in actions:
+                label = {
+                    "Cumplimentada": "Marcar cumplimentada",
+                    "Cumplido": "Marcar cumplido",
+                    "Pagado": "Marcar pagado",
+                    "Cobrado": "Marcar como cobrado",
+                    "Cobro parcial": "Marcar cobro parcial",
+                }.get(status, status)
+                ttk.Button(status_bar, text=label, command=lambda value=status: self.change_status(value)).pack(side="left", padx=3)
 
         self.filter_state = tk.StringVar(value="Todos")
         self.filter_client = tk.StringVar(value="Todos")
         self.filter_period = tk.StringVar()
         self.filter_type = tk.StringVar(value="Todos")
         self.filter_organism = tk.StringVar(value="Todos")
+        self.filter_text = tk.StringVar()
+        self.filter_priority = tk.StringVar(value="Todos")
+        self.filter_date_from = tk.StringVar()
+        self.filter_date_to = tk.StringVar()
+        self.filter_due_from = tk.StringVar()
+        self.filter_due_to = tk.StringVar()
         clients = app.client_service.list_clients(include_inactive=True)
         self.filter_client_map = {"Todos": None, **{
             f"{row['nombre_razon_social']} · {row['cuit_cuil']}": int(row["id"])
             for row in clients
         }}
-        if module in ("vencimientos", "honorarios"):
+        if module in ("tareas", "vencimientos", "honorarios"):
             filters = ttk.Frame(self)
             filters.pack(fill="x", pady=(0, 8))
             ttk.Label(filters, text="Cliente").grid(row=0,column=0,sticky="w")
             ttk.Combobox(filters, textvariable=self.filter_client, values=tuple(self.filter_client_map), state="readonly", width=31).grid(row=0,column=1,sticky="ew",padx=(5,10))
             ttk.Label(filters, text="Estado").grid(row=0,column=2,sticky="w")
-            states = ("Todos", "pendiente", "presentado", "pagado", "vencido", "Próximos 30 días", "Vencidos por fecha") if module == "vencimientos" else ("Todos", "pendiente de facturar", "facturado", "pendiente de cobro", "cobrado parcial", "cobrado total", "vencido")
+            states = {
+                "tareas": ("Todos", "Pendiente", "En proceso", "Esperando cliente", "Esperando organismo", "Cumplimentada", "Vencida", "Cancelada", "No corresponde", "Vencidas por fecha"),
+                "vencimientos": ("Todos", "Pendiente", "Cumplido", "Pagado", "Vencido", "No corresponde", "Próximos 30 días", "Vencidos por fecha"),
+                "honorarios": ("Todos", "Pendiente", "Cobrado", "Cobro parcial", "Vencido", "Bonificado", "Anulado", "No corresponde"),
+            }[module]
             ttk.Combobox(filters, textvariable=self.filter_state, values=states, state="readonly", width=18).grid(row=0,column=3,sticky="ew",padx=(5,10))
             ttk.Label(filters, text="Período").grid(row=0,column=4,sticky="w")
             ttk.Entry(filters, textvariable=self.filter_period, width=10).grid(row=0,column=5,sticky="ew",padx=(5,10))
+            ttk.Label(filters, text="Desde").grid(row=1,column=0,sticky="w",pady=(4,0))
+            DateEntry(filters, self.filter_date_from).grid(row=1,column=1,sticky="ew",padx=(5,10),pady=(4,0))
+            ttk.Label(filters, text="Hasta").grid(row=1,column=2,sticky="w",pady=(4,0))
+            DateEntry(filters, self.filter_date_to).grid(row=1,column=3,sticky="ew",padx=(5,10),pady=(4,0))
+            ttk.Label(filters, text={"tareas":"Área", "vencimientos":"Impuesto / trámite", "honorarios":"Concepto"}[module]).grid(row=1,column=4,sticky="w",pady=(4,0))
+            ttk.Entry(filters, textvariable=self.filter_text).grid(row=1,column=5,sticky="ew",padx=(5,10),pady=(4,0))
             if module == "vencimientos":
-                ttk.Label(filters, text="Tipo").grid(row=1,column=0,sticky="w",pady=(4,0))
-                ttk.Combobox(filters, textvariable=self.filter_type, values=("Todos", "Presentación", "Pago", "Renovación", "Control", "Otro"), state="readonly", width=14).grid(row=1,column=1,sticky="ew",padx=(5,10),pady=(4,0))
-                ttk.Label(filters, text="Organismo").grid(row=1,column=2,sticky="w",pady=(4,0))
-                ttk.Combobox(filters, textvariable=self.filter_organism, values=("Todos", "ARCA", "ARBA", "AGIP", "COMARB", "Municipio", "IGJ", "DPPJ", "Ministerio de Trabajo", "Banco", "Estudio", "Otro"), state="readonly", width=13).grid(row=1,column=3,sticky="ew",padx=(5,10),pady=(4,0))
-            ttk.Button(filters, text="Aplicar", command=self.refresh).grid(row=1 if module=="vencimientos" else 0,column=6,sticky="e",pady=(4,0))
+                ttk.Label(filters, text="Organismo").grid(row=2,column=0,sticky="w",pady=(4,0))
+                ttk.Combobox(filters, textvariable=self.filter_organism, values=("Todos", "ARCA", "ARBA", "AGIP", "COMARB", "Municipio", "IGJ", "DPPJ", "Ministerio de Trabajo", "Banco", "Estudio", "Otro"), state="readonly").grid(row=2,column=1,sticky="ew",padx=(5,10),pady=(4,0))
+            if module == "tareas":
+                ttk.Label(filters, text="Prioridad").grid(row=2,column=0,sticky="w",pady=(4,0))
+                ttk.Combobox(filters, textvariable=self.filter_priority, values=("Todos", "Baja", "Media", "Alta", "Urgente"), state="readonly").grid(row=2,column=1,sticky="ew",padx=(5,10),pady=(4,0))
+                ttk.Label(filters, text="Tipo de tarea").grid(row=2,column=2,sticky="w",pady=(4,0))
+                ttk.Entry(filters, textvariable=self.filter_type).grid(row=2,column=3,sticky="ew",padx=(5,10),pady=(4,0))
+                ttk.Label(filters, text="Vence desde").grid(row=3,column=0,sticky="w",pady=(4,0))
+                DateEntry(filters, self.filter_due_from).grid(row=3,column=1,sticky="ew",padx=(5,10),pady=(4,0))
+                ttk.Label(filters, text="Vence hasta").grid(row=3,column=2,sticky="w",pady=(4,0))
+                DateEntry(filters, self.filter_due_to).grid(row=3,column=3,sticky="ew",padx=(5,10),pady=(4,0))
+            ttk.Button(filters, text="Aplicar filtros", command=self.refresh).grid(row=3 if module=="tareas" else 2,column=6,sticky="e",pady=(4,0))
             filters.columnconfigure(1,weight=1);filters.columnconfigure(3,weight=1)
 
-        self.notebook = ttk.Notebook(self) if module in ("vencimientos", "honorarios") else None
+        self.notebook = ttk.Notebook(self) if module in ("tareas", "vencimientos", "honorarios") else None
         if self.notebook:
             self.notebook.pack(fill="both", expand=True)
         table = ttk.Frame(self.notebook or self)
@@ -172,6 +219,7 @@ class AdministrativeView(ttk.Frame):
             self.group_tree.bind("<Double-1>", lambda _event: self.edit())
         if module in ("tareas", "vencimientos", "honorarios"):
             self.tree.bind("<Double-1>", lambda _event: self.edit())
+            make_tree_sortable(self.tree, {"importe", "importe_pagado", "saldo_pendiente"})
         self.refresh()
 
     def import_arca(self) -> None:
@@ -193,7 +241,7 @@ class AdministrativeView(ttk.Frame):
 
     def refresh(self) -> None:
         rows = self.app.administrative_service.list(self.module)
-        if self.module in ("vencimientos", "honorarios"):
+        if self.module in ("tareas", "vencimientos", "honorarios"):
             selected_client = self.filter_client_map.get(self.filter_client.get())
             period = self.filter_period.get().strip().replace("/", "-")
             if len(period) == 7 and period[2] == "-":
@@ -202,29 +250,70 @@ class AdministrativeView(ttk.Frame):
             selected_state = self.filter_state.get()
             if selected_state == "Próximos 30 días":
                 today = date.today().isoformat(); end = (date.today()+timedelta(days=30)).isoformat()
-                rows = [row for row in rows if row.get("estado") not in ("pagado","presentado") and today <= str(row.get("fecha_vencimiento") or "") <= end]
-            elif selected_state == "Vencidos por fecha":
-                today = date.today().isoformat(); rows = [row for row in rows if row.get("estado") not in ("pagado","presentado") and str(row.get("fecha_vencimiento") or "") < today]
+                rows = [row for row in rows if str(row.get("estado", "")).casefold() not in ("pagado", "cumplido", "no corresponde") and today <= str(row.get("fecha_vencimiento") or "") <= end]
+            elif selected_state in ("Vencidos por fecha", "Vencidas por fecha"):
+                today = date.today().isoformat()
+                closed = ("pagado", "cumplido", "cumplimentada", "cancelada", "no corresponde")
+                rows = [row for row in rows if str(row.get("estado", "")).casefold() not in closed and str(row.get("fecha_vencimiento") or "") < today]
             else:
-                rows = [row for row in rows if (selected_state == "Todos" or row.get("estado") == selected_state)]
+                rows = [row for row in rows if selected_state == "Todos" or str(row.get("estado", "")).casefold() == selected_state.casefold()]
             rows = [row for row in rows if (not period or row.get("periodo") == period)]
-            if self.module == "vencimientos" and self.filter_type.get() != "Todos":
-                rows = [row for row in rows if self.filter_type.get().casefold() in str(row.get("tipo_vencimiento", "")).casefold()]
             if self.module == "vencimientos" and self.filter_organism.get() != "Todos":
                 rows = [row for row in rows if row.get("organismo") == self.filter_organism.get()]
+            if self.module == "tareas" and self.filter_priority.get() != "Todos":
+                rows = [row for row in rows if str(row.get("prioridad", "")).casefold() == self.filter_priority.get().casefold()]
+            term = self.filter_text.get().strip().casefold()
+            searchable = {
+                "tareas": ("modulo", "descripcion"),
+                "vencimientos": ("impuesto", "tipo_vencimiento"),
+                "honorarios": ("servicio", "tipo_registro"),
+            }[self.module]
+            if term:
+                rows = [row for row in rows if term in " ".join(str(row.get(key, "")) for key in searchable).casefold()]
+            if self.module == "tareas" and self.filter_type.get().strip():
+                type_term = self.filter_type.get().strip().casefold()
+                rows = [row for row in rows if type_term in str(row.get("titulo", "")).casefold()]
+            try:
+                start = normalize_date(self.filter_date_from.get()) if self.filter_date_from.get().strip() else ""
+                end = normalize_date(self.filter_date_to.get()) if self.filter_date_to.get().strip() else ""
+                due_start = normalize_date(self.filter_due_from.get()) if self.module == "tareas" and self.filter_due_from.get().strip() else ""
+                due_end = normalize_date(self.filter_due_to.get()) if self.module == "tareas" and self.filter_due_to.get().strip() else ""
+            except ValueError as error:
+                messagebox.showerror("Fecha inválida", str(error), parent=self)
+                return
+            if start and end and start > end:
+                messagebox.showerror("Rango inválido", "La fecha Desde no puede ser posterior a Hasta.", parent=self)
+                return
+            date_key = "fecha_inicio" if self.module == "tareas" else "fecha_vencimiento"
+            if start: rows = [row for row in rows if str(row.get(date_key) or "") >= start]
+            if end: rows = [row for row in rows if str(row.get(date_key) or "") <= end]
+            if self.module == "tareas":
+                if due_start: rows = [row for row in rows if str(row.get("fecha_vencimiento") or "") >= due_start]
+                if due_end: rows = [row for row in rows if str(row.get("fecha_vencimiento") or "") <= due_end]
         self.current_rows = rows
         if self.module == "vencimientos":
-            visible = ["cliente_nombre", "impuesto", "organismo", "periodo", "fecha_vencimiento", "tipo_vencimiento", "estado", "responsable", "observaciones"]
+            visible = ["cliente_nombre", "impuesto", "organismo", "periodo", "fecha_vencimiento", "tipo_vencimiento", "estado", "fecha_cumplimiento", "fecha_pago", "observaciones"]
         elif self.module == "honorarios":
-            visible = ["cliente_nombre", "servicio", "periodo", "importe", "estado", "fecha_emision", "fecha_cobro", "saldo_pendiente", "observaciones"]
+            visible = ["cliente_nombre", "periodo", "servicio", "importe", "importe_pagado", "saldo_pendiente", "estado", "fecha_vencimiento", "fecha_cobro", "medio_pago", "comprobante_emitido", "tipo_comprobante", "numero_comprobante", "observaciones"]
+        elif self.module == "tareas":
+            visible = ["cliente_nombre", "modulo", "titulo", "descripcion", "fecha_inicio", "fecha_vencimiento", "estado", "prioridad", "medio", "documentacion_vinculada", "proximo_paso", "observaciones", "fecha_cumplimiento"]
         else:
             keys = list(rows[0].keys()) if rows else ["id", "cliente_nombre", "estado"]
-            visible = [key for key in keys if key not in ("cliente_id", "descripcion", "observaciones")][:9]
+            visible = [key for key in keys if key not in ("id", "cliente_id", "responsable", "actualizado_en")][:9]
+        labels = {
+            "cliente_nombre": "Cliente", "modulo": "Área", "titulo": "Tipo de tarea",
+            "fecha_inicio": "Fecha", "fecha_vencimiento": "Vencimiento",
+            "fecha_cumplimiento": "Cumplimiento", "fecha_pago": "Pago",
+            "importe": "Facturado", "importe_pagado": "Cobrado", "saldo_pendiente": "Saldo",
+            "servicio": "Concepto", "medio_pago": "Medio de cobro",
+            "documentacion_vinculada": "Documentación vinculada", "proximo_paso": "Próximo paso",
+        }
         self.tree.configure(columns=visible)
         for key in visible:
-            self.tree.heading(key, text=key.replace("_", " ").title())
-            anchor = "e" if key in ("importe", "saldo_pendiente") else ("center" if key.startswith("fecha") or key in ("periodo", "estado") else "w")
-            self.tree.column(key, width=145 if key in ("cliente_nombre", "impuesto", "servicio", "observaciones") else 115, anchor=anchor)
+            self.tree.heading(key, text=labels.get(key, key.replace("_", " ").title()))
+            anchor = "e" if key in ("importe", "importe_pagado", "saldo_pendiente") else ("center" if key.startswith("fecha") or key in ("periodo", "estado", "prioridad") else "w")
+            self.tree.column(key, width=180 if key in ("cliente_nombre", "impuesto", "servicio", "descripcion", "observaciones", "documentacion_vinculada", "proximo_paso") else 120, minwidth=85, anchor=anchor, stretch=True)
+        make_tree_sortable(self.tree, {"importe", "importe_pagado", "saldo_pendiente"})
         for item in self.tree.get_children():
             self.tree.delete(item)
         for row in rows:
@@ -235,20 +324,21 @@ class AdministrativeView(ttk.Frame):
                     value = display_date(value)
                 elif key == "periodo":
                     value = display_period(value)
-                elif key in ("importe", "saldo_pendiente"):
+                elif key in ("importe", "importe_pagado", "saldo_pendiente"):
                     value = money(value)
                 values.append(value)
-            self.tree.insert(
-                "", "end", iid=str(row["id"]), values=values
-            )
+            tag = self._status_tag(str(row.get("estado", "")))
+            self.tree.insert("", "end", iid=str(row["id"]), values=values, tags=(tag,))
+        for tag, color in (("green", "#DCFCE7"), ("yellow", "#FEF3C7"), ("blue", "#DBEAFE"), ("orange", "#FFEDD5"), ("red", "#FEE2E2"), ("gray", "#E5E7EB")):
+            self.tree.tag_configure(tag, background=color)
         if self.group_tree is not None:
             grouped_columns = tuple(key for key in visible if key != "cliente_nombre")
             self.group_tree.configure(columns=grouped_columns)
             self.group_tree.heading("#0", text="Cliente")
             self.group_tree.column("#0", width=230, anchor="w")
             for key in grouped_columns:
-                self.group_tree.heading(key, text=key.replace("_", " ").title())
-                self.group_tree.column(key, width=120, anchor="e" if key in ("importe", "saldo_pendiente") else "center" if key.startswith("fecha") or key in ("periodo", "estado") else "w")
+                self.group_tree.heading(key, text=labels.get(key, key.replace("_", " ").title()))
+                self.group_tree.column(key, width=130, minwidth=85, anchor="e" if key in ("importe", "importe_pagado", "saldo_pendiente") else "center" if key.startswith("fecha") or key in ("periodo", "estado") else "w")
             for item in self.group_tree.get_children():
                 self.group_tree.delete(item)
             parents = {}
@@ -261,9 +351,22 @@ class AdministrativeView(ttk.Frame):
                     value = row.get(key, "")
                     if key.startswith("fecha"): value = display_date(value)
                     elif key == "periodo": value = display_period(value)
-                    elif key in ("importe", "saldo_pendiente"): value = money(value)
+                    elif key in ("importe", "importe_pagado", "saldo_pendiente"): value = money(value)
                     values.append(value)
-                self.group_tree.insert(parents[name], "end", iid=f"record-{row['id']}", values=values)
+                tag = self._status_tag(str(row.get("estado", "")))
+                self.group_tree.insert(parents[name], "end", iid=f"record-{row['id']}", values=values, tags=(tag,))
+            for tag, color in (("green", "#DCFCE7"), ("yellow", "#FEF3C7"), ("blue", "#DBEAFE"), ("orange", "#FFEDD5"), ("red", "#FEE2E2"), ("gray", "#E5E7EB")):
+                self.group_tree.tag_configure(tag, background=color)
+
+    @staticmethod
+    def _status_tag(status: str) -> str:
+        value = status.casefold()
+        if value in ("cumplimentada", "cumplido", "pagado", "cobrado"): return "green"
+        if value in ("pendiente", "cobro parcial"): return "yellow"
+        if value in ("en proceso", "bonificado"): return "blue"
+        if value in ("esperando cliente", "esperando organismo"): return "orange"
+        if value in ("vencido", "vencida"): return "red"
+        return "gray"
 
     def _selected_id(self) -> int | None:
         if self.notebook and self.notebook.index("current") == 1 and self.group_tree:
@@ -273,6 +376,45 @@ class AdministrativeView(ttk.Frame):
             return None
         return selected_tree_id(self.tree)
 
+    def _selected_row(self) -> dict | None:
+        record_id = self._selected_id()
+        return next((row for row in self.current_rows if int(row["id"]) == record_id), None) if record_id else None
+
+    def open_ledger(self) -> None:
+        row = self._selected_row()
+        if not row or not row.get("cliente_id"):
+            messagebox.showinfo("Seleccionar registro", "Seleccioná un registro vinculado a un cliente.", parent=self)
+            return
+        ClientLedgerDialog(self, self.app, int(row["cliente_id"]))
+
+    def change_status(self, status: str) -> None:
+        record_id = self._selected_id()
+        if record_id is None:
+            messagebox.showinfo("Seleccionar registro", "Seleccioná un registro de la tabla.", parent=self)
+            return
+        effective_date = None
+        amount = None
+        if status in ("Cumplimentada", "Cumplido", "Pagado", "Cobrado", "Cobro parcial"):
+            entered = simpledialog.askstring(
+                "Fecha efectiva", "Fecha (DD/MM/AAAA):", parent=self,
+                initialvalue=date.today().strftime("%d/%m/%Y"),
+            )
+            if entered is None: return
+            try: effective_date = normalize_date(entered)
+            except ValueError as error:
+                messagebox.showerror("Fecha inválida", str(error), parent=self); return
+        if status == "Cobro parcial":
+            entered = simpledialog.askstring("Importe cobrado", "Ingresá el importe cobrado:", parent=self)
+            if entered is None: return
+            try: amount = float(entered.replace(".", "").replace(",", "."))
+            except ValueError:
+                messagebox.showerror("Importe inválido", "Ingresá un importe válido.", parent=self); return
+        try:
+            self.app.administrative_service.update_status(self.module, record_id, status, effective_date, amount)
+            self.refresh()
+        except Exception as error:
+            messagebox.showerror("No se pudo actualizar", str(error), parent=self)
+
     def export(self, format_name: str, print_after: bool = False) -> None:
         extension = f".{format_name}"
         filename = filedialog.asksaveasfilename(parent=self, defaultextension=extension, initialfile=f"{DEFINITIONS[self.module][0]}_{date.today().isoformat()}{extension}", filetypes=((format_name.upper(), f"*{extension}"),))
@@ -280,7 +422,9 @@ class AdministrativeView(ttk.Frame):
         title = DEFINITIONS[self.module][0]
         filter_text = f"Cliente: {self.filter_client.get()} | Estado: {self.filter_state.get()} | Período: {self.filter_period.get() or 'Todos'}"
         method = self.app.report_service.export_table_excel if format_name == "xlsx" else self.app.report_service.export_table_pdf
-        method(Path(filename), title, self.current_rows, filter_text)
+        hidden = {"id", "cliente_id", "responsable", "actualizado_en", "creado_en"}
+        rows = [{key: value for key, value in row.items() if key not in hidden} for row in self.current_rows]
+        method(Path(filename), title, rows, filter_text)
         if print_after:
             try: os.startfile(filename, "print")
             except OSError: messagebox.showinfo("PDF listo", f"Abrí e imprimí:\n{filename}", parent=self)

@@ -45,7 +45,6 @@ class MonotributoView(ttk.Frame):
         combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
         ttk.Button(selector, text="Actualizar", command=self.refresh).pack(side="left")
         ttk.Button(selector, text="Importar categorías ARCA", command=self.import_categories).pack(side="left", padx=8)
-        ttk.Button(selector,text="Historial categorías",command=self.open_categories_history).pack(side="left")
         ttk.Button(selector,text="Cambios manuales",command=lambda:CategoryChangesDialog(self,self.app)).pack(side="left",padx=6)
 
         self.details = ttk.Notebook(self)

@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from utils.formatters import display_date, display_period, money, number_ar
 
 from .common import fit_window, make_tree_sortable
+from .ledger_view import TwoRowNotebook
 
 
 MP_TYPES = (
@@ -42,7 +43,7 @@ class DynamicTable(ttk.Frame):
         self.rowconfigure(0, weight=1); self.columnconfigure(0, weight=1)
         self.rows: list[dict] = []; self.row_by_item = {}
 
-    def fill(self, rows: list[dict], exclude: tuple[str, ...] = ("cliente_id", "id_importacion")) -> None:
+    def fill(self, rows: list[dict], exclude: tuple[str, ...] = ("id", "cliente_id", "id_importacion", "actualizado_en", "datos_originales_json")) -> None:
         self.rows = rows
         columns = tuple(key for key in (rows[0].keys() if rows else ("estado",)) if key not in exclude)
         self.tree.configure(columns=columns)
@@ -50,7 +51,7 @@ class DynamicTable(ttk.Frame):
             self.tree.heading(key, text=key.replace("_", " ").title())
             name = key.casefold()
             anchor = "e" if any(term in name for term in ("importe", "saldo", "total", "precio", "cantidad", "comision", "retencion", "percepcion", "impuesto", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota")) else ("center" if "fecha" in name or "periodo" in name or name == "estado" else "w")
-            self.tree.column(key, width=125 if anchor != "w" else 170, anchor=anchor)
+            self.tree.column(key, width=135 if anchor != "w" else 190, minwidth=90, anchor=anchor, stretch=True)
         for item in self.tree.get_children(): self.tree.delete(item)
         self.row_by_item = {}
         for row in rows:
@@ -70,11 +71,15 @@ class BasePlatformPanel(ttk.Frame):
         self.year=tk.StringVar();self.month=tk.StringVar();self.minimum=tk.StringVar(value="0");self.state_filter=tk.StringVar(value="Todos");self.province=tk.StringVar();self.product_filter=tk.StringVar()
         self.tables: dict[str, DynamicTable] = {}
         self.current_rows: dict[str, list[dict]] = {}
+        self.pending_file: Path | None = None
+        self.pending_preview: dict | None = None
+        self.pending_mapping: dict = {}
+        self.pending_options: dict | None = None
 
     def client_id(self) -> int | None:
         return self.clients.get(self.client.get())
 
-    def create_table_tab(self, notebook: ttk.Notebook, title: str) -> DynamicTable:
+    def create_table_tab(self, notebook, title: str) -> DynamicTable:
         frame = ttk.Frame(notebook, padding=5); notebook.add(frame, text=title)
         actions = ttk.Frame(frame); actions.pack(fill="x", pady=(0, 5))
         ttk.Button(actions, text="Exportar Excel", command=lambda name=title: self.export_tab(name, "xlsx")).pack(side="right")
@@ -85,7 +90,8 @@ class BasePlatformPanel(ttk.Frame):
         return table
 
     def export_tab(self, title: str, format_name: str) -> None:
-        rows = self.current_rows.get(title, [])
+        hidden = {"id", "cliente_id", "id_importacion", "actualizado_en", "datos_originales_json"}
+        rows = [{key: value for key, value in row.items() if key not in hidden} for row in self.current_rows.get(title, [])]
         extension = f".{format_name}"
         filename = filedialog.asksaveasfilename(parent=self, defaultextension=extension, initialfile=f"{title.replace('/', '-')}_{date.today().isoformat()}{extension}", filetypes=((format_name.upper(), f"*{extension}"),))
         if not filename: return
@@ -94,7 +100,8 @@ class BasePlatformPanel(ttk.Frame):
         messagebox.showinfo("Exportación terminada", f"Se creó:\n{filename}", parent=self)
 
     def print_tab(self, title: str) -> None:
-        rows = self.current_rows.get(title, [])
+        hidden = {"id", "cliente_id", "id_importacion", "actualizado_en", "datos_originales_json"}
+        rows = [{key: value for key, value in row.items() if key not in hidden} for row in self.current_rows.get(title, [])]
         filename = filedialog.asksaveasfilename(parent=self, defaultextension=".pdf", initialfile=f"{title.replace('/', '-')}_imprimir.pdf", filetypes=(("PDF", "*.pdf"),))
         if not filename: return
         self.app.report_service.export_table_pdf(Path(filename), title, rows, f"Cliente: {self.client.get()}")
@@ -115,6 +122,42 @@ class BasePlatformPanel(ttk.Frame):
         if not client_id: messagebox.showinfo("Seleccionar cliente", "Debe seleccionar un cliente."); return
         ImportHistoryDialog(self, self.app, client_id, self.refresh)
 
+    def current_title(self) -> str:
+        return self.SUBTABS[self.notebook.current]
+
+    def export_current(self, format_name: str) -> None:
+        self.export_tab(self.current_title(), format_name)
+
+    def print_current(self) -> None:
+        self.print_tab(self.current_title())
+
+    def stage_file(self, title: str) -> bool:
+        filename = filedialog.askopenfilename(parent=self, title=title, filetypes=(("Excel o CSV", "*.xls *.xlsx *.csv"),))
+        if not filename: return False
+        preview = self.app.platform_service.preview_file(Path(filename), self.source)
+        mapping = self.mapping_for(filename)
+        if mapping is None: return False
+        self.pending_file = Path(filename); self.pending_preview = preview; self.pending_mapping = mapping
+        self.pending_options = {
+            "mapping": mapping, "duplicate_action": "skip",
+            "header_row": preview["header_row"], "sheet": preview["sheet"],
+            "selected_rows": None, "row_overrides": {},
+        }
+        messagebox.showinfo("Archivo preparado", f"Se cargó {self.pending_file.name}.\nRevisalo con Vista previa y luego confirmá la importación.", parent=self)
+        return True
+
+    def preview_staged(self) -> None:
+        if not self.pending_file or not self.pending_preview:
+            messagebox.showinfo("Cargar archivo", "Primero cargá un archivo.", parent=self); return
+        PlatformImportPreviewDialog(
+            self, self.app, self.pending_file, self.source, self.pending_preview,
+            self.pending_mapping, self._save_pending_options, action_word="Usar",
+        )
+
+    def _save_pending_options(self, options: dict) -> None:
+        self.pending_options = options
+        messagebox.showinfo("Vista previa guardada", "La selección quedó lista. Presioná Confirmar importación.", parent=self)
+
 
 class MercadoPagoPanel(BasePlatformPanel):
     SUBTABS = ("Todos los movimientos", "Resumen del archivo", "Resumen Mensual", "Movimientos Significativos", "Ranking Mercado Pago", "Transferencias Recibidas", "Transferencias Realizadas", "Pagos con QR", "Acreditaciones", "Créditos / Préstamos", "Cobranzas", "Pagos", "Intereses", "Ingresos", "Egresos", "Comisiones", "Retenciones", "Percepciones", "Impuestos", "Contracargos / Devoluciones", "Ajustes", "Movimientos a revisar")
@@ -122,13 +165,18 @@ class MercadoPagoPanel(BasePlatformPanel):
     def __init__(self, parent, app) -> None:
         super().__init__(parent, app, "mp")
         self.direction = tk.StringVar(value="Todos"); self.threshold = tk.StringVar(value=number_ar(app.config_service.get_float("mercado_pago_significativo", 1000)))
-        toolbar = ttk.Frame(self); toolbar.pack(fill="x", pady=(0, 6))
-        ttk.Button(toolbar, text="Cargar Excel/CSV Mercado Pago", style="Primary.TButton", command=self.import_file).pack(side="left")
-        ttk.Button(toolbar, text="Historial de importaciones", command=self.open_history).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="Editar clasificación", command=self.edit_classification).pack(side="left")
-        ttk.Button(toolbar, text="Limpiar período", command=self.clean_period).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="Limpiar cliente", command=self.clean_all).pack(side="left")
-        ttk.Button(toolbar, text="Actualizar", command=self.refresh).pack(side="right")
+        toolbar = ttk.Frame(self); toolbar.pack(fill="x", pady=(0, 4))
+        ttk.Button(toolbar, text="Cargar archivo", style="Primary.TButton", command=self.stage_mp).pack(side="left")
+        ttk.Button(toolbar, text="Vista previa", command=self.preview_staged).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="Confirmar importación", command=self.confirm_mp).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="Limpiar datos", command=self.clean_all).pack(side="left", padx=(10,4))
+        ttk.Button(toolbar, text="Exportar Excel", command=lambda:self.export_current("xlsx")).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="Exportar PDF", command=lambda:self.export_current("pdf")).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="Imprimir", command=self.print_current).pack(side="left", padx=4)
+        utility = ttk.Frame(self); utility.pack(fill="x", pady=(0, 6))
+        ttk.Button(utility, text="Editar clasificación", command=self.edit_classification).pack(side="left")
+        ttk.Button(utility, text="Limpiar período", command=self.clean_period).pack(side="left", padx=6)
+        ttk.Button(utility, text="Actualizar", command=self.refresh).pack(side="right")
         filters = ttk.Frame(self); filters.pack(fill="x", pady=(0, 7))
         for index, (label, widget) in enumerate((
             ("Cliente", ttk.Combobox(filters, textvariable=self.client, values=tuple(self.clients), state="readonly", width=31)),
@@ -145,9 +193,26 @@ class MercadoPagoPanel(BasePlatformPanel):
             row, column = divmod(index, 3); base = column * 2
             ttk.Label(filters, text=label).grid(row=row, column=base, sticky="w", padx=(5,2), pady=2); widget.grid(row=row, column=base+1, sticky="ew", padx=(0,8), pady=2); filters.columnconfigure(base+1, weight=1)
         ttk.Button(filters, text="Filtrar", command=self.refresh).grid(row=3, column=6, padx=5)
-        self.notebook = ttk.Notebook(self); self.notebook.pack(fill="both", expand=True)
+        self.notebook = TwoRowNotebook(self, columns=11); self.notebook.pack(fill="both", expand=True)
         for title in self.SUBTABS: self.create_table_tab(self.notebook, title)
         self.refresh()
+
+    def stage_mp(self) -> None:
+        try: self.stage_file("Cargar archivo de Mercado Pago")
+        except Exception as error: messagebox.showerror("No se pudo leer", str(error), parent=self)
+
+    def confirm_mp(self) -> None:
+        if not self.pending_file or not self.pending_options:
+            messagebox.showinfo("Archivo pendiente", "Cargá un archivo antes de confirmar.", parent=self); return
+        client_id = self.client_id()
+        if not client_id:
+            messagebox.showerror("Cliente requerido", "Debe seleccionar un cliente.", parent=self); return
+        try:
+            options = self.pending_options
+            result = self.app.platform_service.import_mercado_pago(self.pending_file, client_id, options["mapping"], options["duplicate_action"], options["header_row"], options["sheet"], options["selected_rows"], options["row_overrides"])
+            self.pending_file = None; self.pending_preview = None; self.pending_options = None
+            self.refresh(); messagebox.showinfo("Importación Mercado Pago", f"Leídos: {result['read']}\nImportados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nRechazados: {result['rejected']}", parent=self)
+        except Exception as error: messagebox.showerror("No se pudo importar", str(error), parent=self)
 
     def import_file(self) -> None:
         client_id = self.client_id()
@@ -224,14 +289,19 @@ class MercadoLibrePanel(BasePlatformPanel):
     def __init__(self, parent, app) -> None:
         super().__init__(parent, app, "ml")
         self.threshold = tk.StringVar(value="500.000,00")
-        toolbar = ttk.Frame(self); toolbar.pack(fill="x", pady=(0, 6))
-        ttk.Button(toolbar, text="Cargar Mercado Libre Ventas", style="Primary.TButton", command=lambda: self.import_file("Ventas")).pack(side="left")
-        ttk.Button(toolbar, text="Cargar Mercado Libre Compras", command=lambda: self.import_file("Compras")).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="Historial", command=self.open_history).pack(side="left")
-        ttk.Button(toolbar,text="Editar clasificación",command=self.edit_classification).pack(side="left",padx=6)
-        ttk.Button(toolbar, text="Limpiar período", command=self.clean_period).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="Limpiar cliente", command=self.clean_all).pack(side="left")
-        ttk.Button(toolbar, text="Actualizar", command=self.refresh).pack(side="right")
+        self.pending_kind = "Ventas"
+        toolbar = ttk.Frame(self); toolbar.pack(fill="x", pady=(0, 4))
+        ttk.Button(toolbar, text="Cargar archivo", style="Primary.TButton", command=self.stage_ml).pack(side="left")
+        ttk.Button(toolbar, text="Vista previa", command=self.preview_staged).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="Confirmar importación", command=self.confirm_ml).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="Limpiar datos", command=self.clean_all).pack(side="left", padx=(10,4))
+        ttk.Button(toolbar, text="Exportar Excel", command=lambda:self.export_current("xlsx")).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="Exportar PDF", command=lambda:self.export_current("pdf")).pack(side="left", padx=4)
+        ttk.Button(toolbar, text="Imprimir", command=self.print_current).pack(side="left", padx=4)
+        utility = ttk.Frame(self); utility.pack(fill="x", pady=(0, 6))
+        ttk.Button(utility,text="Editar clasificación",command=self.edit_classification).pack(side="left")
+        ttk.Button(utility, text="Limpiar período", command=self.clean_period).pack(side="left", padx=6)
+        ttk.Button(utility, text="Actualizar", command=self.refresh).pack(side="right")
         filters = ttk.Frame(self); filters.pack(fill="x", pady=(0, 7))
         for index, (label, widget) in enumerate((
             ("Cliente", ttk.Combobox(filters, textvariable=self.client, values=tuple(self.clients), state="readonly", width=31)),
@@ -249,9 +319,32 @@ class MercadoLibrePanel(BasePlatformPanel):
             row, column = divmod(index, 3); base = column * 2
             ttk.Label(filters, text=label).grid(row=row, column=base, sticky="w", padx=(6,2), pady=2); widget.grid(row=row, column=base+1, sticky="ew", padx=(0,8), pady=2); filters.columnconfigure(base+1, weight=1)
         ttk.Button(filters, text="Filtrar", command=self.refresh).grid(row=3, column=6, padx=6)
-        self.notebook = ttk.Notebook(self); self.notebook.pack(fill="both", expand=True)
+        self.notebook = TwoRowNotebook(self, columns=8); self.notebook.pack(fill="both", expand=True)
         for title in self.SUBTABS: self.create_table_tab(self.notebook, title)
         self.refresh()
+
+    def stage_ml(self) -> None:
+        kind = simpledialog.askstring("Tipo de archivo", "Indicá Ventas o Compras:", parent=self, initialvalue=self.pending_kind)
+        if kind is None: return
+        normalized = kind.strip().casefold()
+        if normalized not in ("ventas", "compras"):
+            messagebox.showerror("Tipo inválido", "Ingresá Ventas o Compras.", parent=self); return
+        self.pending_kind = normalized.title()
+        try: self.stage_file(f"Cargar archivo de Mercado Libre - {self.pending_kind}")
+        except Exception as error: messagebox.showerror("No se pudo leer", str(error), parent=self)
+
+    def confirm_ml(self) -> None:
+        if not self.pending_file or not self.pending_options:
+            messagebox.showinfo("Archivo pendiente", "Cargá un archivo antes de confirmar.", parent=self); return
+        client_id = self.client_id()
+        if not client_id:
+            messagebox.showerror("Cliente requerido", "Debe seleccionar un cliente.", parent=self); return
+        try:
+            options = self.pending_options
+            result = self.app.platform_service.import_mercado_libre(self.pending_file, client_id, self.pending_kind, options["mapping"], options["duplicate_action"], options["header_row"], options["sheet"], options["selected_rows"], options["row_overrides"])
+            self.pending_file = None; self.pending_preview = None; self.pending_options = None
+            self.refresh(); messagebox.showinfo("Importación Mercado Libre", f"Leídos: {result['read']}\nImportados: {result['imported']}\nDuplicados: {result['duplicates']}\nA revisar: {result['review']}\nRechazados: {result['rejected']}", parent=self)
+        except Exception as error: messagebox.showerror("No se pudo importar", str(error), parent=self)
 
     def import_file(self, source_kind: str) -> None:
         client_id = self.client_id()
@@ -318,14 +411,14 @@ class MercadoLibrePanel(BasePlatformPanel):
 
 
 class PlatformImportPreviewDialog(tk.Toplevel):
-    def __init__(self,parent,app,path:Path,source:str,preview:dict,manual_mapping:dict,callback) -> None:
-        super().__init__(parent);self.app=app;self.path=path;self.source=source;self.preview=preview;self.manual_mapping=dict(manual_mapping);self.callback=callback;self.row_overrides={};self.title("Vista previa de importación");fit_window(self,1250,720);self.transient(parent.winfo_toplevel());self.grab_set()
+    def __init__(self,parent,app,path:Path,source:str,preview:dict,manual_mapping:dict,callback,action_word:str="Importar") -> None:
+        super().__init__(parent);self.app=app;self.path=path;self.source=source;self.preview=preview;self.manual_mapping=dict(manual_mapping);self.callback=callback;self.row_overrides={};self.action_word=action_word;self.title("Vista previa de importación");fit_window(self,1250,720);self.transient(parent.winfo_toplevel());self.grab_set()
         body=ttk.Frame(self,padding=14);body.pack(fill="both",expand=True);ttk.Label(body,text="Vista previa antes de guardar",style="Title.TLabel").pack(anchor="w");self.info=tk.StringVar();ttk.Label(body,textvariable=self.info,style="Subtitle.TLabel").pack(anchor="w",pady=(2,7))
         top=ttk.Frame(body);top.pack(fill="x",pady=(0,6));ttk.Label(top,text="Duplicados").pack(side="left");self.duplicate=tk.StringVar(value="skip");ttk.Combobox(top,textvariable=self.duplicate,values=("skip","replace","import"),state="readonly",width=12).pack(side="left",padx=6);ttk.Label(top,text="skip=omitir · replace=reemplazar · import=marcar posible duplicado",style="Subtitle.TLabel").pack(side="left")
         ttk.Button(top,text="Cambiar fila de encabezado",command=self.change_header).pack(side="right");ttk.Button(top,text="Mapear columnas",command=self.remap).pack(side="right",padx=6);ttk.Button(top,text="Reintentar lectura",command=self.retry).pack(side="right")
         self.summary=ttk.LabelFrame(body,text="Resumen superior detectado",padding=7);self.summary.pack(fill="x",pady=(0,6));self.summary_label=ttk.Label(self.summary);self.summary_label.pack(anchor="w")
         holder=ttk.Frame(body);holder.pack(fill="both",expand=True);self.tree=ttk.Treeview(holder,show="headings",selectmode="extended");sy=ttk.Scrollbar(holder,orient="vertical",command=self.tree.yview);sx=ttk.Scrollbar(holder,orient="horizontal",command=self.tree.xview);self.tree.configure(yscrollcommand=sy.set,xscrollcommand=sx.set);self.tree.grid(row=0,column=0,sticky="nsew");sy.grid(row=0,column=1,sticky="ns");sx.grid(row=1,column=0,sticky="ew");holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1);self.tree.bind("<Double-1>",lambda _event:self.edit_row())
-        actions=ttk.Frame(body);actions.pack(fill="x",pady=(8,0));ttk.Button(actions,text="Editar fila seleccionada",command=self.edit_row).pack(side="left");ttk.Button(actions,text="Cancelar",command=self.destroy).pack(side="right");ttk.Button(actions,text="Importar todo",style="Primary.TButton",command=lambda:self.confirm(False)).pack(side="right",padx=6);ttk.Button(actions,text="Importar solo seleccionadas",command=lambda:self.confirm(True)).pack(side="right")
+        actions=ttk.Frame(body);actions.pack(fill="x",pady=(8,0));ttk.Button(actions,text="Editar fila seleccionada",command=self.edit_row).pack(side="left");ttk.Button(actions,text="Cancelar",command=self.destroy).pack(side="right");ttk.Button(actions,text=f"{action_word} todo",style="Primary.TButton",command=lambda:self.confirm(False)).pack(side="right",padx=6);ttk.Button(actions,text=f"{action_word} solo seleccionadas",command=lambda:self.confirm(True)).pack(side="right")
         self.fill()
     def fill(self):
         p=self.preview;self.info.set(f"Archivo: {self.path.name} · Hoja: {p['sheet']} · Encabezado: fila {p['header_row']} · Registros: {p['rows']} · Columnas reconocidas: {len(p['mapping'])} · Sin reconocer: {len(p['columns'])-len(set(p['mapping'].values()))}")

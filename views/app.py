@@ -113,6 +113,7 @@ class AccountingStudioApp(tk.Tk):
             ("bienes", "Bienes personales"),
             ("casas", "Casas particulares"),
             ("documentacion", "Documentación"),
+            ("tareas", "Tareas"),
             ("vencimientos", "Vencimientos"),
             ("honorarios", "Honorarios"),
             ("reportes", "Reportes"),

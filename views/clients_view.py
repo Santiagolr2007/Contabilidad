@@ -51,10 +51,6 @@ class ClientsView(ttk.Frame):
             top, text="Importar Sistema Registral ARCA",
             command=self.import_registry_pdf,
         ).pack(side="right", padx=8, pady=8)
-        ttk.Button(
-            top, text="Historial de importaciones ARCA",
-            command=self.open_arca_history,
-        ).pack(side="right", pady=8)
 
         filters = ttk.Frame(self)
         filters.pack(fill="x", pady=15)
@@ -86,7 +82,7 @@ class ClientsView(ttk.Frame):
 
         columns = (
             "seleccionar", "cuit", "tipo", "actividad", "regimen", "categoria", "estado",
-            "servicio", "responsable", "legajo", "pagos", "documentacion", "riesgo",
+            "servicio", "legajo", "pagos", "documentacion", "riesgo",
             "ultimo_control", "vencimiento", "observaciones",
         )
         tree_frame = ttk.Frame(self)
@@ -105,7 +101,6 @@ class ClientsView(ttk.Frame):
             ("categoria", "Categoría", 75),
             ("estado", "Estado", 80),
             ("servicio", "Servicio contratado", 155),
-            ("responsable", "Responsable", 105),
             ("legajo", "Estado legajo", 105),
             ("pagos", "Pagos", 95),
             ("documentacion", "Documentación", 110),
@@ -178,7 +173,7 @@ class ClientsView(ttk.Frame):
             if term and term not in " ".join((
                 str(client["nombre_razon_social"]), str(client["cuit_cuil"]),
                 str(client.get("rubro_display", "")), summary["tipo_cliente"],
-                summary["estado_cliente"], summary["responsable_interno"],
+                summary["estado_cliente"],
                 summary["servicio_contratado"], summary["actividad_principal"],
             )).casefold():
                 continue
@@ -214,7 +209,6 @@ class ClientsView(ttk.Frame):
                     client["categoria_actual"],
                     summary["estado_cliente"],
                     summary["servicio_contratado"],
-                    summary["responsable_interno"],
                     summary["estado_legajo"],
                     payment_state,
                     summary["estado_documentacion"],
@@ -400,7 +394,6 @@ class RegistryImportPreviewDialog(tk.Toplevel):
         ("dependencia", "Dependencia"), ("region", "Región"),
         ("tipo_inscripcion", "Tipo de inscripción"), ("mes_cierre", "Mes de cierre"),
         ("sistema_control", "Sistema de control"), ("segmento", "Segmento"),
-        ("ultima_actualizacion", "Última actualización"),
         ("impuestos_activos", "Registra impuestos activos"),
         ("tipo_documento", "Tipo de documento"), ("genero", "Género"),
         ("sucesion_indivisa", "Sucesión indivisa"), ("apellido_materno", "Apellido materno"),

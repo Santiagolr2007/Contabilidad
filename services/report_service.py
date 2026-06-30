@@ -35,7 +35,7 @@ class ReportService:
         "ranking_clientes": "Ranking de clientes por ventas",
         "ranking_proveedores": "Ranking de proveedores por compras",
         "documentacion": "Documentación pendiente",
-        "tareas": "Tareas pendientes",
+        "tareas": "Reporte General de Tareas",
         "honorarios": "Honorarios pendientes",
         "mercado_pago": "Reporte Mercado Pago",
         "mercado_pago_resumen": "Mercado Pago - Resumen mensual",
@@ -65,7 +65,9 @@ class ReportService:
         self, destination: Path, title: str, rows: list[dict], filter_text: str = ""
     ) -> Path:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        dataframe = self._prepare_excel_dates(pd.DataFrame(rows or [{"Estado": "Sin información"}]))
+        hidden = {"id", "cliente_id", "id_importacion", "responsable", "responsable_interno", "actualizado_en", "ultima_actualizacion", "datos_originales_json"}
+        public_rows = [{key: value for key, value in row.items() if key not in hidden} for row in rows]
+        dataframe = self._prepare_excel_dates(pd.DataFrame(public_rows or [{"Estado": "Sin información"}]))
         with pd.ExcelWriter(destination, engine="openpyxl") as writer:
             dataframe.to_excel(writer, index=False, sheet_name="Reporte", startrow=4)
         workbook = load_workbook(destination)
@@ -101,7 +103,7 @@ class ReportService:
     ) -> Path:
         try:
             from reportlab.lib import colors
-            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib.pagesizes import A3, A4, landscape
             from reportlab.lib.styles import getSampleStyleSheet
             from reportlab.lib.units import mm
             from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -109,17 +111,19 @@ class ReportService:
             raise RuntimeError("Instalá las dependencias con: python -m pip install -r requirements.txt") from error
         destination.parent.mkdir(parents=True, exist_ok=True)
         styles = getSampleStyleSheet()
-        rows = rows or [{"Estado": "Sin información"}]
+        hidden = {"id", "cliente_id", "id_importacion", "responsable", "responsable_interno", "actualizado_en", "ultima_actualizacion", "datos_originales_json"}
+        rows = [{key: value for key, value in row.items() if key not in hidden} for row in rows] or [{"Estado": "Sin información"}]
         headers = list(rows[0])
-        if len(headers) > 12:
+        if len(headers) > 16:
             preferred = (
                 "cliente", "nombre_razon_social", "cuit_cuil", "fecha", "periodo",
                 "descripcion", "tipo_movimiento", "tipo_operacion", "impuesto",
                 "organismo", "contraparte", "producto", "importe_bruto",
-                "importe_neto", "saldo", "estado", "responsable", "observaciones",
+                "importe_neto", "saldo", "estado", "prioridad", "medio",
+                "documentacion_vinculada", "proximo_paso", "observaciones",
             )
             selected = [key for key in preferred if key in headers]
-            headers = (selected + [key for key in headers if key not in selected])[:12]
+            headers = (selected + [key for key in headers if key not in selected])[:16]
         money_terms = ("importe", "saldo", "total", "comision", "retencion", "percepcion", "impuesto", "precio", "descuento", "envio", "venta", "compra", "cobranza", "pago", "transferencia", "interes", "anulacion", "nota")
 
         def formatted(key, value):
@@ -132,12 +136,13 @@ class ReportService:
 
         data = [[Paragraph(str(header).replace("_", " ").title(), styles["BodyText"]) for header in headers]]
         data.extend([[Paragraph(formatted(header, row.get(header)), styles["BodyText"]) for header in headers] for row in rows])
-        available = 277 * mm
+        wide = len(headers) > 10
+        available = (400 if wide else 277) * mm
         widths = [available / max(len(headers), 1)] * len(headers)
         table = Table(data, colWidths=widths, repeatRows=1)
         table.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1F4E78")), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.HexColor("#C8D0D8")), ("VALIGN", (0,0), (-1,-1), "TOP"), ("FONTSIZE", (0,0), (-1,-1), 6.5), ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F4F7FA")])]))
         story = [Paragraph(title, styles["Title"]), Paragraph(f"Fecha: {date.today().strftime('%d/%m/%Y')}", styles["Normal"]), Paragraph(f"Filtro: {filter_text or 'Todos'}", styles["Normal"]), Paragraph(f"Registros: {len(rows)}", styles["Normal"]), Spacer(1, 5*mm), table]
-        SimpleDocTemplate(str(destination), pagesize=landscape(A4), leftMargin=10*mm, rightMargin=10*mm, topMargin=12*mm, bottomMargin=12*mm).build(story)
+        SimpleDocTemplate(str(destination), pagesize=landscape(A3 if wide else A4), leftMargin=10*mm, rightMargin=10*mm, topMargin=12*mm, bottomMargin=12*mm).build(story)
         return destination
 
     @staticmethod
@@ -233,6 +238,10 @@ class ReportService:
         source_filter: str = "ARCA + Mercado Libre",
         voucher_type_filter: str = "",
         currency_filter: str = "",
+        task_state_filter: str = "",
+        task_area_filter: str = "",
+        task_type_filter: str = "",
+        task_priority_filter: str = "",
     ) -> Path:
         if report not in self.REPORTS:
             raise ValueError("El reporte seleccionado no existe.")
@@ -285,7 +294,43 @@ class ReportService:
                     "SELECT * FROM categorias_monotributo " + ("WHERE estado='Vigente' " if report != "comparativo_categorias" else "") + "ORDER BY vigencia_desde DESC,categoria"
                 )]
             if not rows: raise ValueError("No hay datos para el reporte seleccionado.")
+            for row in rows:
+                for hidden in ("id", "cliente_id", "responsable", "actualizado_en", "fecha_importacion"):
+                    row.pop(hidden, None)
             return self._write_dataframe(destination, self._prepare_excel_dates(pd.DataFrame(rows)), "Monotributo")
+
+        if report == "tareas":
+            start, end = self._validate_date_range(date_from, date_to)
+            from .administrative_service import AdministrativeService
+            task_rows = AdministrativeService(self.database).list("tareas")
+            state = task_state_filter.strip()
+            closed = ("cumplimentada", "cancelada", "no corresponde")
+            selected = []
+            for task in task_rows:
+                task_date = str(task.get("fecha_inicio") or "")
+                task_state = str(task.get("estado") or "")
+                if client_id and int(task.get("cliente_id") or 0) != client_id: continue
+                if start and task_date < start.isoformat(): continue
+                if end and task_date > end.isoformat(): continue
+                if task_area_filter and task_area_filter.casefold() not in str(task.get("modulo", "")).casefold(): continue
+                if task_type_filter and task_type_filter.casefold() not in str(task.get("titulo", "")).casefold(): continue
+                if task_priority_filter not in ("", "Todos") and str(task.get("prioridad", "")).casefold() != task_priority_filter.casefold(): continue
+                if state == "Vencidas" and not (task_state.casefold() == "vencida" or (str(task.get("fecha_vencimiento") or "") < date.today().isoformat() and task_state.casefold() not in closed)): continue
+                if state == "Pendientes" and task_state.casefold() != "pendiente": continue
+                if state == "Cumplimentadas" and task_state.casefold() != "cumplimentada": continue
+                if state not in ("", "Todos", "Vencidas", "Pendientes", "Cumplimentadas") and task_state.casefold() != state.casefold(): continue
+                selected.append(task)
+            cuit_by_client = {int(row["id"]): row["cuit_cuil"] for row in self.database.query("SELECT id,cuit_cuil FROM clientes")}
+            rows = [{
+                "Cliente": task.get("cliente_nombre", "General"), "CUIT / CUIL": cuit_by_client.get(int(task.get("cliente_id") or 0), ""),
+                "Área": task.get("modulo", ""), "Tipo de tarea": task.get("titulo", ""), "Descripción": task.get("descripcion", ""),
+                "Fecha": task.get("fecha_inicio", ""), "Fecha de vencimiento": task.get("fecha_vencimiento", ""),
+                "Estado": task.get("estado", ""), "Prioridad": task.get("prioridad", ""), "Medio": task.get("medio", ""),
+                "Documentación vinculada": task.get("documentacion_vinculada", ""), "Próximo paso": task.get("proximo_paso", ""),
+                "Observaciones": task.get("observaciones", ""),
+            } for task in selected]
+            if not rows: raise ValueError("No hay tareas para los filtros seleccionados.")
+            return self._write_dataframe(destination, self._prepare_excel_dates(pd.DataFrame(rows)), "Tareas")
 
         condition = " AND cliente_id = ?" if client_id else ""
         params = (client_id,) if client_id else ()
@@ -341,7 +386,6 @@ class ReportService:
             "iibb": "SELECT * FROM iibb_monotributo WHERE 1=1" + condition + " ORDER BY periodo DESC",
             "alertas": "SELECT * FROM alertas_fiscales WHERE 1=1" + condition + " ORDER BY fecha_creacion DESC",
             "documentacion": "SELECT * FROM documentacion WHERE estado NOT IN ('Aprobada','aprobada')" + condition + " ORDER BY id DESC",
-            "tareas": "SELECT * FROM tareas WHERE estado NOT IN ('finalizado','archivado','cobrado')" + condition + " ORDER BY fecha_vencimiento",
             "honorarios": "SELECT * FROM honorarios WHERE estado NOT IN ('cobrado total')" + condition + " ORDER BY id DESC",
             "ranking_clientes": (
                 "SELECT contraparte_nombre, contraparte_documento, COUNT(*) cantidad, "
@@ -388,6 +432,7 @@ class ReportService:
         if not rows:
             raise ValueError("No hay datos para el reporte seleccionado.")
         dataframe = pd.DataFrame(rows)
+        dataframe = dataframe.drop(columns=[column for column in ("id", "cliente_id", "id_importacion", "responsable", "responsable_interno", "actualizado_en", "ultima_actualizacion") if column in dataframe.columns])
         if report not in voucher_reports and report != "usd":
             dataframe = self._filter_dataframe_by_range(dataframe, start, end)
         if dataframe.empty:
@@ -488,7 +533,9 @@ class ReportService:
         destination.parent.mkdir(parents=True, exist_ok=True)
         with pd.ExcelWriter(destination, engine="openpyxl") as writer:
             for name, rows in sheets.items():
-                dataframe = self._prepare_excel_dates(pd.DataFrame(rows or [{"Estado": "Sin información"}]))
+                hidden = {"id", "cliente_id", "id_importacion", "actualizado_en", "datos_originales_json"}
+                public_rows = [{key: value for key, value in row.items() if key not in hidden} for row in rows]
+                dataframe = self._prepare_excel_dates(pd.DataFrame(public_rows or [{"Estado": "Sin información"}]))
                 dataframe.to_excel(writer, sheet_name=name[:31], index=False, startrow=3)
         workbook = load_workbook(destination)
         client = self.database.query_one("SELECT nombre_razon_social,cuit_cuil FROM clientes WHERE id=?", (client_id,))
@@ -517,12 +564,18 @@ class ReportService:
         platform_filter: str = "",
         source_filter: str = "ARCA + Mercado Libre",
         voucher_type_filter: str = "", currency_filter: str = "",
+        task_state_filter: str = "", task_area_filter: str = "",
+        task_type_filter: str = "", task_priority_filter: str = "",
     ) -> Path:
         if report.startswith("mercado_pago") or report.startswith("mercado_libre"):
             if not client_id: raise ValueError("Seleccioná un cliente.")
             sheets = self.platform_report_data(report, client_id, date_from, date_to, platform_filter)
             rows = sheets.get("Resumen Mensual", []) or sheets.get("Movimientos", []) or sheets.get("Operaciones", []) or next(iter(sheets.values()), [])
-            return self.export_table_pdf(destination, self.REPORTS[report], rows, f"Cliente ID {client_id}")
+            hidden = {"id", "cliente_id", "id_importacion", "actualizado_en", "datos_originales_json"}
+            rows = [{key: value for key, value in row.items() if key not in hidden} for row in rows]
+            client = self.database.query_one("SELECT nombre_razon_social,cuit_cuil FROM clientes WHERE id=?", (client_id,))
+            client_text = f"{client['nombre_razon_social']} · CUIT/CUIL {client['cuit_cuil']}" if client else "Cliente seleccionado"
+            return self.export_table_pdf(destination, self.REPORTS[report], rows, client_text)
         # Para reportes existentes, se genera primero la misma consulta en un Excel
         # temporal y se presenta un resumen tabular del contenido.
         import tempfile
@@ -530,7 +583,8 @@ class ReportService:
             xlsx = Path(directory) / "reporte.xlsx"
             self.export_named(report, xlsx, client_id, date_from, date_to,
                               platform_filter, source_filter, voucher_type_filter,
-                              currency_filter)
+                              currency_filter, task_state_filter, task_area_filter,
+                              task_type_filter, task_priority_filter)
             frame = pd.read_excel(xlsx)
         return self.export_table_pdf(destination, self.REPORTS[report], frame.to_dict("records"), "Rango seleccionado")
 
@@ -720,9 +774,11 @@ class ReportService:
         if not client_row:
             raise ValueError("El cliente seleccionado no existe.")
         client = dict(client_row)
+        public_client = {key: value for key, value in client.items() if key not in {"id", "creado_en", "actualizado_en", "responsable_interno", "ultima_actualizacion"}}
 
         def records(sql: str) -> list[dict]:
-            return [dict(row) for row in self.database.query(sql, (client_id,))]
+            hidden = {"id", "cliente_id", "id_importacion", "responsable", "responsable_interno", "actualizado_en", "ultima_actualizacion"}
+            return [{key: value for key, value in dict(row).items() if key not in hidden} for row in self.database.query(sql, (client_id,))]
 
         profiles = {
             "Resumen": {
@@ -736,7 +792,7 @@ class ReportService:
                 "Observaciones": client.get("observaciones", ""),
                 "Fecha de exportación": date.today(),
             },
-            "Datos Cliente": client,
+            "Datos Cliente": public_client,
         }
         sheets: dict[str, pd.DataFrame] = {
             name: pd.DataFrame(
@@ -755,7 +811,6 @@ class ReportService:
             "Tareas": "SELECT * FROM tareas WHERE cliente_id=? ORDER BY id DESC",
             "Vencimientos": "SELECT * FROM vencimientos WHERE cliente_id=? ORDER BY fecha_vencimiento",
             "Honorarios": "SELECT * FROM honorarios WHERE cliente_id=? ORDER BY id DESC",
-            "Historial importaciones": "SELECT * FROM importaciones_archivos WHERE cliente_id=? ORDER BY fecha_importacion DESC",
         }
         for sheet_name, sql in queries.items():
             rows = records(sql)

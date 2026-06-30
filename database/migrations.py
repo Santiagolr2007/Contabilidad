@@ -58,6 +58,17 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             "organismo": "TEXT DEFAULT ''",
             "tipo_vencimiento": "TEXT DEFAULT ''",
             "responsable": "TEXT DEFAULT 'NATALIA'",
+            "fecha_cumplimiento": "TEXT",
+        },
+    )
+    _add_columns(
+        connection,
+        "tareas",
+        {
+            "medio": "TEXT DEFAULT ''",
+            "documentacion_vinculada": "TEXT DEFAULT ''",
+            "proximo_paso": "TEXT DEFAULT ''",
+            "fecha_cumplimiento": "TEXT",
         },
     )
     _add_columns(
@@ -69,6 +80,9 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             "importe_pagado": "REAL DEFAULT 0",
             "numero_comprobante": "TEXT DEFAULT ''",
             "actualizado_en": "TEXT",
+            "comprobante_emitido": "TEXT DEFAULT ''",
+            "tipo_comprobante": "TEXT DEFAULT ''",
+            "condiciones_presupuesto": "TEXT DEFAULT ''",
         },
     )
     _add_columns(

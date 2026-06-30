@@ -69,6 +69,9 @@ class DashboardView(ttk.Frame):
         self.app.show_view("dashboard")
 
     def open_category(self, key: str, title: str) -> None:
+        if key == "responsables":
+            self.app.show_view("responsables")
+            return
         rows = self.app.dashboard_service.clients_by_category(key)
         DashboardDetailDialog(self, self.app, title, rows, f"Categoría: {title}")
 
@@ -84,14 +87,18 @@ class DashboardView(ttk.Frame):
         tree.grid(row=0, column=0, sticky="nsew"); yscroll.grid(row=0, column=1, sticky="ns")
         frame.rowconfigure(0, weight=1); frame.columnconfigure(0, weight=1)
         alert_by_id = {}
-        for alert in self.app.dashboard_service.active_alerts_summary():
+        alerts = self.app.dashboard_service.active_alerts_summary()
+        for alert in alerts:
             item = tree.insert("", "end", values=(alert["tipo_alerta"], alert["cantidad"], alert["prioridad"]))
             alert_by_id[item] = alert
+        if not alerts:
+            tree.insert("", "end", values=("No hay alertas activas.", "", ""))
 
         def open_alert(_event=None):
             selected = tree.selection()
             if not selected: return
-            alert = alert_by_id[selected[0]]
+            alert = alert_by_id.get(selected[0])
+            if not alert: return
             rows = self.app.dashboard_service.alert_clients(alert["clave"])
             DashboardDetailDialog(self, self.app, alert["tipo_alerta"], rows, f"Prioridad: {alert['prioridad']}")
 

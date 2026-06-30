@@ -111,23 +111,26 @@ class DashboardService:
         in_30 = (date.today() + timedelta(days=30)).isoformat()
         queries = (
             ("documentacion_pendiente", "Documentación pendiente", "Media", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='documentacion' AND LOWER(estado) NOT IN ('recibido','aprobado','no corresponde')"),
-            ("pagos_vencidos", "Pagos vencidos", "Urgente", f"SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='pagos' AND saldo>0 AND vencimiento<'{today}'"),
-            ("pagos_pendientes", "Pagos pendientes", "Media", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='pagos' AND saldo>0"),
+            ("pagos_vencidos", "Pagos vencidos", "Urgente", f"SELECT COUNT(DISTINCT cliente_id) n FROM (SELECT cliente_id FROM cliente_legajo_registros WHERE seccion='pagos' AND saldo>0 AND vencimiento<'{today}' UNION SELECT cliente_id FROM honorarios WHERE saldo_pendiente>0 AND fecha_vencimiento<'{today}' AND LOWER(estado) NOT IN ('cobrado','bonificado','anulado','no corresponde'))"),
+            ("pagos_pendientes", "Pagos pendientes", "Media", "SELECT COUNT(DISTINCT cliente_id) n FROM (SELECT cliente_id FROM cliente_legajo_registros WHERE seccion='pagos' AND saldo>0 UNION SELECT cliente_id FROM honorarios WHERE saldo_pendiente>0 AND LOWER(estado) NOT IN ('cobrado','bonificado','anulado','no corresponde'))"),
             ("vencimientos_vencidos", "Vencimientos vencidos", "Urgente", f"SELECT COUNT(DISTINCT cliente_id) n FROM vencimientos WHERE estado NOT IN ('pagado','presentado') AND fecha_vencimiento<'{today}'"),
             ("vencimientos_proximos", "Vencimientos próximos", "Alta", f"SELECT COUNT(DISTINCT cliente_id) n FROM vencimientos WHERE estado NOT IN ('pagado','presentado') AND fecha_vencimiento BETWEEN '{today}' AND '{in_30}'"),
-            ("riesgo_alto", "Riesgo alto o urgente", "Urgente", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='riesgos' AND (datos_json LIKE '%\"Alto\"%' OR datos_json LIKE '%\"Urgente\"%')"),
+            ("riesgo_alto", "Riesgo alto", "Alta", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='riesgos' AND datos_json LIKE '%\"Alto\"%'"),
+            ("riesgo_urgente", "Riesgo urgente", "Urgente", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='riesgos' AND datos_json LIKE '%\"Urgente\"%'"),
             ("accesos_pendientes", "Accesos pendientes o bloqueados", "Alta", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='documentacion' AND datos_json LIKE '%\"tipo_registro\": \"Acceso\"%' AND (datos_json LIKE '%Pendiente%' OR datos_json LIKE '%Bloqueado%')"),
-            ("tareas_pendientes", "Tareas pendientes", "Media", "SELECT COUNT(DISTINCT cliente_id) n FROM tareas WHERE cliente_id IS NOT NULL AND estado NOT IN ('finalizado','archivado','cobrado')"),
-            ("tareas_vencidas", "Tareas vencidas", "Urgente", f"SELECT COUNT(DISTINCT cliente_id) n FROM tareas WHERE cliente_id IS NOT NULL AND estado NOT IN ('finalizado','archivado','cobrado') AND fecha_vencimiento<'{today}'"),
+            ("tareas_pendientes", "Tareas pendientes", "Media", "SELECT COUNT(DISTINCT cliente_id) n FROM tareas WHERE cliente_id IS NOT NULL AND LOWER(estado) NOT IN ('finalizado','archivado','cobrado','cumplimentada','cancelada','no corresponde')"),
+            ("tareas_vencidas", "Tareas vencidas", "Urgente", f"SELECT COUNT(DISTINCT cliente_id) n FROM tareas WHERE cliente_id IS NOT NULL AND LOWER(estado) NOT IN ('finalizado','archivado','cobrado','cumplimentada','cancelada','no corresponde') AND fecha_vencimiento<'{today}'"),
             ("obligaciones_pendientes", "Obligaciones mensuales pendientes", "Alta", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='obligaciones' AND LOWER(estado) NOT IN ('pagado','no corresponde','bonificado')"),
             ("obligaciones_vencidas", "Obligaciones mensuales vencidas", "Urgente", f"SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='obligaciones' AND LOWER(estado) NOT IN ('pagado','no corresponde','bonificado') AND vencimiento<'{today}'"),
             ("regularizacion", "Clientes en regularización", "Alta", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='datos_complementarios' AND datos_json LIKE '%En regularización%'"),
-            ("legajo_incompleto", "Legajo incompleto", "Media", "SELECT COUNT(*) n FROM clientes WHERE estado='activo'"),
+            ("legajo_incompleto", "Legajos incompletos", "Media", "SELECT COUNT(*) n FROM clientes c WHERE c.estado='activo' AND (COALESCE(c.cuit_cuil,'')='' OR COALESCE(c.actividad,'')='' OR NOT EXISTS (SELECT 1 FROM datos_fiscales_cliente d WHERE d.cliente_id=c.id))"),
         )
         result = []
         for key, label, priority, sql in queries:
             row = self.database.query_one(sql)
-            result.append({"clave": key, "tipo_alerta": label, "cantidad": int(row["n"] or 0), "prioridad": priority})
+            count = int(row["n"] or 0)
+            if count:
+                result.append({"clave": key, "tipo_alerta": label, "cantidad": count, "prioridad": priority})
         return result
 
     def alert_clients(self, key: str) -> list[dict]:
@@ -140,7 +143,8 @@ class DashboardService:
                 "documentacion_pendiente": "r.seccion='documentacion' AND LOWER(r.estado) NOT IN ('recibido','aprobado','no corresponde')",
                 "pagos_vencidos": "r.seccion='pagos' AND r.saldo>0 AND r.vencimiento<DATE('now')",
                 "pagos_pendientes": "r.seccion='pagos' AND r.saldo>0",
-                "riesgo_alto": "r.seccion='riesgos' AND (r.datos_json LIKE '%\"Alto\"%' OR r.datos_json LIKE '%\"Urgente\"%')",
+                "riesgo_alto": "r.seccion='riesgos' AND r.datos_json LIKE '%\"Alto\"%'",
+                "riesgo_urgente": "r.seccion='riesgos' AND r.datos_json LIKE '%\"Urgente\"%'",
                 "accesos_pendientes": "r.seccion='documentacion' AND r.datos_json LIKE '%\"tipo_registro\": \"Acceso\"%' AND (r.datos_json LIKE '%Pendiente%' OR r.datos_json LIKE '%Bloqueado%')",
                 "obligaciones_pendientes": "r.seccion='obligaciones' AND LOWER(r.estado) NOT IN ('pagado','no corresponde','bonificado')",
                 "obligaciones_vencidas": "r.seccion='obligaciones' AND LOWER(r.estado) NOT IN ('pagado','no corresponde','bonificado') AND r.vencimiento<DATE('now')",
@@ -148,7 +152,7 @@ class DashboardService:
             }
             if key in ("tareas_pendientes", "tareas_vencidas"):
                 date_clause = " AND fecha_vencimiento<DATE('now')" if key == "tareas_vencidas" else ""
-                rows = self.database.query("SELECT DISTINCT cliente_id FROM tareas WHERE cliente_id IS NOT NULL AND estado NOT IN ('finalizado','archivado','cobrado')" + date_clause)
+                rows = self.database.query("SELECT DISTINCT cliente_id FROM tareas WHERE cliente_id IS NOT NULL AND LOWER(estado) NOT IN ('finalizado','archivado','cobrado','cumplimentada','cancelada','no corresponde')" + date_clause)
                 ids = {row["cliente_id"] for row in rows}
             elif key == "legajo_incompleto":
                 ids = {row["id"] for row in self.database.query("SELECT id FROM clientes WHERE estado='activo'")}

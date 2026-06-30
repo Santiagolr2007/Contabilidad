@@ -38,21 +38,27 @@ versiones anteriores.
 - Recategorización de monotributo con parámetros adicionales.
 - Once solapas visibles en la ficha monotributista, incluidas Monotributo e IIBB.
 - Alertas por concentración, categoría y relación compras/ventas.
-- Gestión de documentación, tareas, vencimientos y honorarios.
+- Gestión consolidada de documentación, tareas, vencimientos y honorarios de todos los clientes.
+- Tareas con filtros por cliente, área, tipo, estado, prioridad, fecha y vencimiento;
+  acciones de estado, colores y acceso directo al legajo.
+- Vencimientos con fechas de cumplimiento y pago editables, acciones de estado,
+  filtros completos y colores de situación.
 - Catorce reportes Excel y exportación del detalle de comprobantes.
 - Selector de calendario propio, sin dependencias gráficas externas.
 - Configuración editable de límites, alícuotas y categorías.
 - Índice Maestro de Clientes con filtros, casillas de selección y estados automáticos.
-- Legajo integral por cliente organizado en 18 solapas: resumen, datos,
+- Legajo integral por cliente organizado por áreas: resumen, datos,
   servicio/presupuesto, pagos, obligaciones, relevamiento, documentación y
-  accesos, organismos, bancos, riesgos, tareas, vencimientos e historial/baja.
-- Cuenta corriente de honorarios con saldo automático, totales y alertas por deuda.
-- Historial automático de altas, modificaciones y eliminaciones del legajo.
+  accesos, organismos, bancos, riesgos, tareas y vencimientos.
+- Cuenta corriente de honorarios/pagos al estudio con saldo automático, cobro
+  total o parcial, totales, filtros, estados coloreados y alertas por deuda.
+- Auditoría técnica interna sin mostrar historial, responsables internos ni
+  fechas de última modificación al usuario.
 - Exportación parcial o completa a Excel/PDF y exportación masiva a ZIP.
 - Exportación del Índice Maestro visible a Excel o PDF.
 - Dashboard interactivo con categorías fiscales, alertas activas y vencimientos
   a 7, 15 y 30 días; cada detalle abre el legajo del cliente.
-- Vencimientos con tipo múltiple, organismo, responsable, filtros y vista
+- Vencimientos con tipo múltiple, organismo, filtros y vista
   agrupada por cliente.
 - Honorarios con selección de cliente por nombre/CUIT, filtros, agrupación y
   control de duplicados.
@@ -62,7 +68,7 @@ versiones anteriores.
   significativos, rankings y subsolapas por movimiento.
 - Mercado Libre: ventas, compras, notas de crédito, devoluciones, productos,
   contrapartes, operaciones significativas y neteo mensual.
-- Historial y borrado controlado de importaciones de plataformas.
+- Borrado controlado de importaciones de plataformas y trazabilidad técnica interna.
 - Reportes Mercado Pago y Mercado Libre en Excel, PDF e impresión.
 - Importación robusta de vencimientos ARCA (`.xls`, `.xlsx` o `.csv`) con detección
   de encabezados, vinculación por CUIT, vista previa, control de duplicados e historial.
@@ -71,8 +77,11 @@ versiones anteriores.
   con cálculo del pago por actividad, SIPA, obra social y adherentes.
 - Reportes matriciales anuales de compras por proveedor y ventas por comprador,
   combinando comprobantes ARCA y operaciones de Mercado Libre.
-- Pantalla de Responsables Inscriptos con ventas, compras, IVA estimado,
-  vencimientos, riesgos, exportación e impresión.
+- Pantalla de Responsables Inscriptos en tarjetas coloreadas con ventas, compras,
+  IVA, saldo técnico, vencimientos, pagos, documentación, riesgos y alertas.
+- Reporte General de Tareas exportable a Excel/PDF e imprimible.
+- Mercado Pago y Mercado Libre con barras de acciones separadas, menús en dos
+  filas, vista previa, confirmación independiente y scroll horizontal/vertical.
 
 Todas las pantallas y exportaciones muestran fechas como `DD/MM/AAAA`, períodos
 como `MM/AAAA` e importes con formato argentino (`1.250.000,00`). Internamente,
@@ -82,8 +91,8 @@ SQLite conserva fechas y períodos normalizados para poder ordenarlos correctame
 
 Desde **Clientes**, use **Abrir legajo integral**. Cada solapa permite agregar,
 modificar, eliminar, filtrar y exportar sus registros. Los campos con opciones
-usan listas desplegables y muestran sus alternativas en azul. El responsable
-predeterminado es `NATALIA`, pero puede reemplazarse en cada registro.
+usan listas desplegables y muestran sus alternativas en azul. Los datos técnicos
+de auditoría se conservan internamente y no se muestran en la interfaz.
 
 Para una exportación masiva, marque clientes con la casilla de la primera
 columna y pulse **Exportar clientes seleccionados**. Si no marca ninguno, se

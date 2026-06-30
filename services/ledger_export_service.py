@@ -16,7 +16,8 @@ from .ledger_service import LedgerService
 
 class LedgerExportService:
     SECTION_ORDER = (
-        "resumen", "datos_cliente", *LedgerService.SECTIONS.keys(), "historial"
+        "resumen", "datos_cliente",
+        *(key for key in LedgerService.SECTIONS if key != "baja_historial"),
     )
 
     def __init__(self, database: Database, ledger: LedgerService) -> None:
@@ -32,6 +33,8 @@ class LedgerExportService:
             summary = self.ledger.summary(client_id)
             client = summary.pop("client")
             area_states = summary.pop("estados_area", {})
+            for hidden in ("responsable_interno", "ultima_actualizacion"):
+                summary.pop(hidden, None)
             values = {
                 "Nombre / Razón social": client["nombre_razon_social"],
                 "CUIT / CUIL": client["cuit_cuil"],
@@ -47,14 +50,17 @@ class LedgerExportService:
             row = self.database.query_one(
                 "SELECT * FROM clientes WHERE id=?", (client_id,)
             )
-            return [{"Campo": key, "Valor": value} for key, value in dict(row).items()] if row else []
+            hidden = {"id", "creado_en", "actualizado_en"}
+            return [{"Campo": key, "Valor": value} for key, value in dict(row).items() if key not in hidden] if row else []
         if section == "historial":
             return self.ledger.history(client_id)
         rows = self.ledger.list_records(client_id, section)
         flattened = []
         for row in rows:
-            base = {"id": row["id"], "estado": row["estado"], "responsable": row["responsable"], "actualizado_en": row["actualizado_en"]}
+            base = {"estado": row["estado"]}
             base.update(row["datos"])
+            for hidden in ("responsable", "responsable_interno", "ultima_actualizacion", "actualizado_en"):
+                base.pop(hidden, None)
             flattened.append(base)
         if flattened and section == "pagos":
             flattened.append({
@@ -112,8 +118,7 @@ class LedgerExportService:
             sheet["A2"] = "CUIT / CUIL"; sheet["B2"] = client["cuit_cuil"]
             sheet["A3"] = "Fecha de exportación"; sheet["B3"] = date.today()
             sheet["B3"].number_format = "dd/mm/yyyy"
-            sheet["A4"] = "Responsable interno"; sheet["B4"] = summary["responsable_interno"]
-            for row in range(1, 5):
+            for row in range(1, 4):
                 sheet.cell(row, 1).font = Font(bold=True, color="1F4E78")
             sheet.freeze_panes = "A7"
             sheet.auto_filter.ref = f"A6:{sheet.cell(sheet.max_row, sheet.max_column).coordinate}"
@@ -194,7 +199,6 @@ class LedgerExportService:
             Paragraph(f"Tipo de cliente: {summary['tipo_cliente']}", styles["Normal"]),
             Paragraph(f"Condición fiscal: {str(client['regimen_principal']).replace('_', ' ').title()}", styles["Normal"]),
             Paragraph(f"Estado: {summary['estado_cliente']}", styles["Normal"]),
-            Paragraph(f"Responsable interno: {summary['responsable_interno']}", styles["Normal"]),
             Paragraph(f"Fecha de exportación: {date.today().strftime('%d/%m/%Y')}", styles["Normal"]),
             Spacer(1, 8 * mm),
         ])
@@ -264,7 +268,6 @@ class LedgerExportService:
                 "Condición fiscal": str(client["regimen_principal"]).replace("_", " ").title(),
                 "Estado cliente": summary["estado_cliente"],
                 "Servicio": summary["servicio_contratado"],
-                "Responsable": summary["responsable_interno"],
                 "Estado legajo": summary["estado_legajo"],
                 "Pagos": summary["estado_pagos"],
                 "Documentación": summary["estado_documentacion"],

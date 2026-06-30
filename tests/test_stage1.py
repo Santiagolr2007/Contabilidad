@@ -618,7 +618,7 @@ class StageOneTests(unittest.TestCase):
         exporter.export_master_index_pdf(index_pdf, [self.client_id])
         workbook = load_workbook(xlsx)
         self.assertIn("Resumen", workbook.sheetnames)
-        self.assertIn("Pagos del Cliente", workbook.sheetnames)
+        self.assertIn("Honorarios", workbook.sheetnames)
         self.assertIn("Riesgos", workbook.sheetnames)
         self.assertEqual(workbook["Resumen"]["A1"].value, "Cliente")
         self.assertEqual(workbook["Resumen"]["A6"].value, "Campo")

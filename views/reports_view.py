@@ -43,6 +43,8 @@ class ReportsView(ttk.Frame):
         self.platform_filter = tk.StringVar()
         self.source_filter=tk.StringVar(value="ARCA + Mercado Libre")
         self.voucher_type_filter=tk.StringVar();self.currency_filter=tk.StringVar()
+        self.task_state_filter=tk.StringVar(value="Todos");self.task_area_filter=tk.StringVar()
+        self.task_type_filter=tk.StringVar();self.task_priority_filter=tk.StringVar(value="Todos")
         ttk.Label(box, text="Reporte").grid(row=0, column=0, sticky="w", pady=6)
         ttk.Combobox(
             box,
@@ -70,8 +72,12 @@ class ReportsView(ttk.Frame):
         ttk.Combobox(box,textvariable=self.source_filter,values=("ARCA","Mercado Libre","ARCA + Mercado Libre"),state="readonly").grid(row=5,column=1,sticky="ew",padx=10)
         ttk.Label(box,text="Tipo de comprobante").grid(row=6,column=0,sticky="w",pady=6);ttk.Entry(box,textvariable=self.voucher_type_filter).grid(row=6,column=1,sticky="ew",padx=10)
         ttk.Label(box,text="Moneda").grid(row=7,column=0,sticky="w",pady=6);ttk.Combobox(box,textvariable=self.currency_filter,values=("","ARS","USD"),state="readonly").grid(row=7,column=1,sticky="ew",padx=10)
+        ttk.Label(box,text="Tareas - estado").grid(row=8,column=0,sticky="w",pady=6);ttk.Combobox(box,textvariable=self.task_state_filter,values=("Todos","Pendientes","En proceso","Esperando cliente","Esperando organismo","Cumplimentadas","Vencidas","Cancelada","No corresponde"),state="readonly").grid(row=8,column=1,sticky="ew",padx=10)
+        ttk.Label(box,text="Tareas - área").grid(row=9,column=0,sticky="w",pady=6);ttk.Entry(box,textvariable=self.task_area_filter).grid(row=9,column=1,sticky="ew",padx=10)
+        ttk.Label(box,text="Tareas - tipo").grid(row=10,column=0,sticky="w",pady=6);ttk.Entry(box,textvariable=self.task_type_filter).grid(row=10,column=1,sticky="ew",padx=10)
+        ttk.Label(box,text="Tareas - prioridad").grid(row=11,column=0,sticky="w",pady=6);ttk.Combobox(box,textvariable=self.task_priority_filter,values=("Todos","Baja","Media","Alta","Urgente"),state="readonly").grid(row=11,column=1,sticky="ew",padx=10)
         actions = ttk.Frame(box)
-        actions.grid(row=8, column=1, sticky="e", pady=12)
+        actions.grid(row=12, column=1, sticky="e", pady=12)
         ttk.Button(
             actions,
             text="Ver / editar últimos 12 meses",
@@ -142,6 +148,8 @@ class ReportsView(ttk.Frame):
                 self.platform_filter.get().strip(),
                 self.source_filter.get(),self.voucher_type_filter.get().strip(),
                 self.currency_filter.get().strip(),
+                self.task_state_filter.get(),self.task_area_filter.get().strip(),
+                self.task_type_filter.get().strip(),self.task_priority_filter.get(),
             )
             messagebox.showinfo("Reporte creado", f"Se creó:\n{filename}")
         except Exception as error:
@@ -161,6 +169,8 @@ class ReportsView(ttk.Frame):
                 self.platform_filter.get().strip(),
                 self.source_filter.get(),self.voucher_type_filter.get().strip(),
                 self.currency_filter.get().strip(),
+                self.task_state_filter.get(),self.task_area_filter.get().strip(),
+                self.task_type_filter.get().strip(),self.task_priority_filter.get(),
             )
             if print_after:
                 try: os.startfile(filename, "print")
