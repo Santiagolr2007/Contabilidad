@@ -241,14 +241,6 @@ class MonotributoCategoriesService:
                 f"UPDATE categorias_monotributo SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
                 (*changes.values(), category_id),
             )
-
-    def change_history(self, category_id: int | None = None) -> list[dict]:
-        condition="WHERE h.categoria_id=?" if category_id else "";params=(category_id,) if category_id else ()
-        return [dict(row) for row in self.database.query(
-            f"""SELECT h.id,c.categoria,c.vigencia_desde,h.campo,h.valor_anterior,
-               h.valor_nuevo,h.responsable,h.motivo,h.fecha
-               FROM historial_categorias_monotributo h JOIN categorias_monotributo c ON c.id=h.categoria_id
-               {condition} ORDER BY h.fecha DESC""",params)]
             connection.executemany(
                 """INSERT INTO historial_categorias_monotributo(
                        categoria_id,campo,valor_anterior,valor_nuevo,responsable,motivo)
@@ -257,6 +249,13 @@ class MonotributoCategoriesService:
                  for key, value in changes.items()],
             )
 
+    def change_history(self, category_id: int | None = None) -> list[dict]:
+        condition="WHERE h.categoria_id=?" if category_id else "";params=(category_id,) if category_id else ()
+        return [dict(row) for row in self.database.query(
+            f"""SELECT h.id,c.categoria,c.vigencia_desde,h.campo,h.valor_anterior,
+               h.valor_nuevo,h.responsable,h.motivo,h.fecha
+               FROM historial_categorias_monotributo h JOIN categorias_monotributo c ON c.id=h.categoria_id
+               {condition} ORDER BY h.fecha DESC""",params)]
     def client_payment(self, client_id: int) -> dict:
         profile = self.database.query_one(
             "SELECT * FROM monotributo_cliente WHERE cliente_id=?", (client_id,)

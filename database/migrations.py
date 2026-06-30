@@ -69,7 +69,6 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             "importe_pagado": "REAL DEFAULT 0",
             "numero_comprobante": "TEXT DEFAULT ''",
             "actualizado_en": "TEXT",
-            "posible_duplicado": "INTEGER DEFAULT 0",
         },
     )
     _add_columns(
@@ -351,6 +350,7 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             "origen": "TEXT DEFAULT 'manual'",
             "id_importacion": "INTEGER",
             "actualizado_en": "TEXT",
+            "posible_duplicado": "INTEGER DEFAULT 0",
         },
     )
     _add_columns(
