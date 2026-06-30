@@ -83,7 +83,6 @@ class DashboardService:
             item.update({
                 "tipo_cliente": summary["tipo_cliente"],
                 "servicio_contratado": summary["servicio_contratado"],
-                "responsable_interno": summary["responsable_interno"],
                 "riesgo_general": summary["riesgo_general"],
                 "proximo_vencimiento": summary["proximo_vencimiento"],
             })
@@ -120,8 +119,6 @@ class DashboardService:
             ("accesos_pendientes", "Accesos pendientes o bloqueados", "Alta", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='documentacion' AND datos_json LIKE '%\"tipo_registro\": \"Acceso\"%' AND (datos_json LIKE '%Pendiente%' OR datos_json LIKE '%Bloqueado%')"),
             ("tareas_pendientes", "Tareas pendientes", "Media", "SELECT COUNT(DISTINCT cliente_id) n FROM tareas WHERE cliente_id IS NOT NULL AND LOWER(estado) NOT IN ('finalizado','archivado','cobrado','cumplimentada','cancelada','no corresponde')"),
             ("tareas_vencidas", "Tareas vencidas", "Urgente", f"SELECT COUNT(DISTINCT cliente_id) n FROM tareas WHERE cliente_id IS NOT NULL AND LOWER(estado) NOT IN ('finalizado','archivado','cobrado','cumplimentada','cancelada','no corresponde') AND fecha_vencimiento<'{today}'"),
-            ("obligaciones_pendientes", "Obligaciones mensuales pendientes", "Alta", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='obligaciones' AND LOWER(estado) NOT IN ('pagado','no corresponde','bonificado')"),
-            ("obligaciones_vencidas", "Obligaciones mensuales vencidas", "Urgente", f"SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='obligaciones' AND LOWER(estado) NOT IN ('pagado','no corresponde','bonificado') AND vencimiento<'{today}'"),
             ("regularizacion", "Clientes en regularización", "Alta", "SELECT COUNT(DISTINCT cliente_id) n FROM cliente_legajo_registros WHERE seccion='datos_complementarios' AND datos_json LIKE '%En regularización%'"),
             ("legajo_incompleto", "Legajos incompletos", "Media", "SELECT COUNT(*) n FROM clientes c WHERE c.estado='activo' AND (COALESCE(c.cuit_cuil,'')='' OR COALESCE(c.actividad,'')='' OR NOT EXISTS (SELECT 1 FROM datos_fiscales_cliente d WHERE d.cliente_id=c.id))"),
         )
@@ -146,8 +143,6 @@ class DashboardService:
                 "riesgo_alto": "r.seccion='riesgos' AND r.datos_json LIKE '%\"Alto\"%'",
                 "riesgo_urgente": "r.seccion='riesgos' AND r.datos_json LIKE '%\"Urgente\"%'",
                 "accesos_pendientes": "r.seccion='documentacion' AND r.datos_json LIKE '%\"tipo_registro\": \"Acceso\"%' AND (r.datos_json LIKE '%Pendiente%' OR r.datos_json LIKE '%Bloqueado%')",
-                "obligaciones_pendientes": "r.seccion='obligaciones' AND LOWER(r.estado) NOT IN ('pagado','no corresponde','bonificado')",
-                "obligaciones_vencidas": "r.seccion='obligaciones' AND LOWER(r.estado) NOT IN ('pagado','no corresponde','bonificado') AND r.vencimiento<DATE('now')",
                 "regularizacion": "r.seccion='datos_complementarios' AND r.datos_json LIKE '%En regularización%'",
             }
             if key in ("tareas_pendientes", "tareas_vencidas"):

@@ -73,7 +73,7 @@ versiones anteriores.
 - Reportes Mercado Pago y Mercado Libre en Excel, PDF e impresión.
 - Importación robusta de vencimientos ARCA (`.xls`, `.xlsx` o `.csv`) con detección
   de encabezados, vinculación por CUIT, vista previa, control de duplicados e historial.
-- Importación desde PDF de Sistema Registral ARCA para precargar clientes y su legajo.
+- Alta y edición manual de clientes y de todas las secciones activas del legajo.
 - Importación y versionado de las categorías A a K de Monotributo desde PDF ARCA,
   con cálculo del pago por actividad, SIPA, obra social y adherentes.
 - Reportes matriciales anuales de compras por proveedor y ventas por comprador,
@@ -97,6 +97,11 @@ Desde **Clientes**, use **Abrir legajo integral**. Cada solapa permite agregar,
 modificar, eliminar, filtrar y exportar sus registros. Los campos con opciones
 usan listas desplegables y muestran sus alternativas en azul. Los datos técnicos
 de auditoría se conservan internamente y no se muestran en la interfaz.
+
+El legajo activo contiene Resumen, Datos del Cliente, Servicio/Presupuesto,
+Honorarios/Pagos, Relevamiento, Documentación y Accesos, ARCA manual, IIBB,
+Municipal, Laboral, Bancos, Riesgos, Tareas/Eventos y Vencimientos. La creación
+del cliente y la carga del legajo son exclusivamente manuales.
 
 Para una exportación masiva, marque clientes con la casilla de la primera
 columna y pulse **Exportar clientes seleccionados**. Si no marca ninguno, se

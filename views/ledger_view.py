@@ -89,9 +89,7 @@ class ClientLedgerDialog(tk.Toplevel):
         self.notebook.pack(fill="both", expand=True, padx=14, pady=(0, 14))
         self._summary_tab()
         self._data_tab()
-        for section in app.ledger_service.SECTIONS:
-            if section == "baja_historial":
-                continue
+        for section in app.ledger_service.VISIBLE_SECTIONS:
             self._records_tab(section)
 
     @staticmethod
@@ -148,8 +146,6 @@ class ClientLedgerDialog(tk.Toplevel):
             ("Documentación pendiente", str(summary["documentacion_pendiente"]), COLORS["amber"]),
             ("Tareas pendientes", str(summary["tareas_pendientes"]), COLORS["amber"]),
             ("Tareas vencidas", str(summary["tareas_vencidas"]), COLORS["red"]),
-            ("Obligaciones pendientes", str(summary["obligaciones_pendientes"]), COLORS["amber"]),
-            ("Obligaciones vencidas", str(summary["obligaciones_vencidas"]), COLORS["red"]),
             ("Próximo vencimiento", display_date(summary["proximo_vencimiento"]), COLORS["blue"]),
         )
         for index, (title, value, color) in enumerate(cards):
@@ -170,7 +166,7 @@ class ClientLedgerDialog(tk.Toplevel):
 
     def _data_tab(self) -> None:
         frame = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(frame, text="Datos Cliente")
+        self.notebook.add(frame, text="Datos del Cliente")
         tree = self._tree(frame, ("campo", "valor"), {"campo": 260, "valor": 650})
 
         def refresh() -> None:
@@ -188,6 +184,15 @@ class ClientLedgerDialog(tk.Toplevel):
                     tree.insert(
                         "", "end", values=(key.replace("_", " ").title(), value or "")
                     )
+            records = self.app.ledger_service.list_records(
+                self.client_id, "datos_complementarios"
+            )
+            if records:
+                fields = self.app.ledger_service.SECTIONS["datos_complementarios"][1]
+                labels = {key: label for key, label, _options in fields}
+                for key, value in records[0]["datos"].items():
+                    if key in labels and value not in (None, ""):
+                        tree.insert("", "end", values=(labels[key], value))
 
         def edit_base() -> None:
             # Importación diferida para evitar una dependencia circular al cargar vistas.
@@ -195,9 +200,28 @@ class ClientLedgerDialog(tk.Toplevel):
 
             ClientForm(self, self.app, self.client_id, refresh)
 
+        def edit_contacts() -> None:
+            records = self.app.ledger_service.list_records(
+                self.client_id, "datos_complementarios"
+            )
+            record_id = int(records[0]["id"]) if records else None
+            LedgerRecordDialog(
+                self,
+                self.app,
+                self.client_id,
+                "datos_complementarios",
+                refresh,
+                record_id,
+            )
+
         actions = ttk.Frame(frame)
         actions.pack(fill="x", pady=(8, 0))
         ttk.Button(actions, text="Editar datos base", command=edit_base).pack(side="left")
+        ttk.Button(
+            actions,
+            text="Editar domicilios y contactos",
+            command=edit_contacts,
+        ).pack(side="left", padx=6)
         ttk.Button(actions, text="Exportar esta solapa", command=lambda: self.export_sections(["datos_cliente"])).pack(side="right")
         refresh()
 
@@ -232,9 +256,6 @@ class ClientLedgerDialog(tk.Toplevel):
                     f"Facturado: {money(total_importe)} | Cobrado: {money(paid)} | "
                     f"Pendiente: {money(total_saldo)} | Pendientes: {sum(1 for row in rows if row['saldo'])} | Vencidos: {overdue}"
                 )
-            elif section == "obligaciones":
-                overdue = sum(1 for row in rows if row["estado"].casefold() == "vencido" or (row["vencimiento"] and row["vencimiento"] < date.today().isoformat() and row["estado"].casefold() != "pagado"))
-                totals_text = f"Total obligaciones: {money(total_importe)} | Pendientes: {len(rows) - sum(1 for row in rows if row['estado'].casefold() in ('pagado', 'no corresponde', 'bonificado'))} | Vencidas: {overdue}"
             else:
                 totals_text = f"Registros: {len(rows)} | Importe total: {money(total_importe)} | Saldo total: {money(total_saldo)}"
             totals.configure(text=totals_text)
@@ -296,8 +317,6 @@ class ClientLedgerDialog(tk.Toplevel):
         if section == "pagos":
             ttk.Button(toolbar, text="Marcar como cobrado", command=lambda: mark_state("Cobrado", "estado_pago")).pack(side="left", padx=(6, 0))
             ttk.Button(toolbar, text="Marcar cobro parcial", command=lambda: mark_state("Cobro parcial", "estado_pago")).pack(side="left", padx=4)
-        elif section == "obligaciones":
-            ttk.Button(toolbar, text="Marcar pagada", command=lambda: mark_state("Pagado", "estado")).pack(side="left", padx=(6, 0))
         elif section == "servicio_presupuesto":
             ttk.Button(toolbar, text="Aceptar", command=lambda: mark_state("Aceptado", "estado_presupuesto")).pack(side="left", padx=(6, 0))
             ttk.Button(toolbar, text="Rechazar", command=lambda: mark_state("Rechazado", "estado_presupuesto")).pack(side="left", padx=4)
@@ -306,20 +325,6 @@ class ClientLedgerDialog(tk.Toplevel):
         ttk.Button(toolbar, text="Exportar esta solapa", command=lambda: self.export_sections([section])).pack(side="right")
         tree.bind("<Double-1>", lambda _event: edit())
         refresh()
-
-    def _history_tab(self) -> None:
-        frame = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(frame, text="Historial")
-        toolbar = ttk.Frame(frame)
-        toolbar.pack(fill="x", pady=(0, 7))
-        ttk.Button(
-            toolbar,
-            text="Exportar esta solapa",
-            command=lambda: self.export_sections(["historial"]),
-        ).pack(side="right")
-        tree = self._tree(frame, ("fecha", "tipo", "seccion", "dato", "anterior", "nuevo", "responsable"), {"fecha": 150, "tipo": 120, "seccion": 150, "dato": 260, "anterior": 130, "nuevo": 130, "responsable": 110})
-        for row in self.app.ledger_service.history(self.client_id):
-            tree.insert("", "end", values=(display_date(row["fecha"]), row["tipo_cambio"], row["seccion"], row["dato_modificado"], row["estado_anterior"], row["estado_nuevo"], row["responsable"]))
 
     def export_full(self) -> None:
         self.export_sections(None)
@@ -346,7 +351,6 @@ class LedgerRecordDialog(tk.Toplevel):
             var = tk.StringVar(); self.vars[key] = var
             is_multi = (
                 (section == "servicio_presupuesto" and key == "tipo_servicio")
-                or (section == "obligaciones" and key == "tipo_obligacion")
                 or (section == "vencimientos_legajo" and key == "tipo")
                 or (section == "iibb_legajo" and key == "jurisdiccion")
             )

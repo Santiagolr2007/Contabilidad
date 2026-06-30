@@ -17,7 +17,7 @@ from .ledger_service import LedgerService
 class LedgerExportService:
     SECTION_ORDER = (
         "resumen", "datos_cliente",
-        *(key for key in LedgerService.SECTIONS if key != "baja_historial"),
+        *LedgerService.VISIBLE_SECTIONS,
     )
 
     def __init__(self, database: Database, ledger: LedgerService) -> None:
@@ -29,6 +29,8 @@ class LedgerExportService:
         return re.sub(r'[<>:"/\\|?*;]+', "_", value).strip(" ._") or "Cliente"
 
     def section_rows(self, client_id: int, section: str) -> list[dict]:
+        if section not in self.SECTION_ORDER:
+            raise ValueError("La sección seleccionada no forma parte del legajo activo.")
         if section == "resumen":
             summary = self.ledger.summary(client_id)
             client = summary.pop("client")
@@ -51,9 +53,21 @@ class LedgerExportService:
                 "SELECT * FROM clientes WHERE id=?", (client_id,)
             )
             hidden = {"id", "creado_en", "actualizado_en"}
-            return [{"Campo": key, "Valor": value} for key, value in dict(row).items() if key not in hidden] if row else []
-        if section == "historial":
-            return self.ledger.history(client_id)
+            result = [
+                {"Campo": key.replace("_", " ").title(), "Valor": value}
+                for key, value in dict(row).items()
+                if key not in hidden
+            ] if row else []
+            records = self.ledger.list_records(client_id, "datos_complementarios")
+            if records:
+                fields = self.ledger.SECTIONS["datos_complementarios"][1]
+                labels = {key: label for key, label, _options in fields}
+                result.extend(
+                    {"Campo": labels[key], "Valor": value}
+                    for key, value in records[0]["datos"].items()
+                    if key in labels and value not in (None, "")
+                )
+            return result
         rows = self.ledger.list_records(client_id, section)
         flattened = []
         for row in rows:
@@ -69,17 +83,11 @@ class LedgerExportService:
                 "importe_cobrado": sum(float(row.get("importe_cobrado") or 0) for row in flattened),
                 "saldo_pendiente": sum(float(row.get("saldo_pendiente") or 0) for row in flattened),
             })
-        elif flattened and section == "obligaciones":
-            flattened.append({
-                "estado": "TOTALES",
-                "importe_mensual": sum(float(row.get("importe_mensual") or 0) for row in flattened),
-            })
         return flattened
 
     def section_title(self, section: str) -> str:
         if section == "resumen": return "Resumen"
         if section == "datos_cliente": return "Datos Cliente"
-        if section == "historial": return "Historial"
         return self.ledger.SECTIONS[section][0]
 
     def export_excel(

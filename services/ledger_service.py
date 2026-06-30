@@ -15,17 +15,31 @@ def field(key: str, label: str, options: tuple[str, ...] = ()) -> tuple:
 class LedgerService:
     """Legajo extensible: todas las áreas usan el mismo CRUD y trazabilidad."""
 
+    # Las secciones retiradas pueden seguir existiendo en bases antiguas, pero no
+    # forman parte del flujo activo ni de las exportaciones del legajo.
+    VISIBLE_SECTIONS = (
+        "servicio_presupuesto",
+        "pagos",
+        "relevamiento",
+        "documentacion",
+        "arca",
+        "iibb_legajo",
+        "municipal",
+        "laboral",
+        "bancos",
+        "riesgos",
+        "eventos",
+        "vencimientos_legajo",
+    )
+
     SECTIONS = {
-        "datos_complementarios": ("Datos Complementarios", (
+        "datos_complementarios": ("Datos del Cliente", (
             field("tipo_cliente", "Tipo de cliente", ("Persona humana", "Persona jurídica", "Sucesión indivisa", "Otro")),
             field("estado_cliente", "Estado del cliente", ("Activo", "En alta", "En regularización", "Pausado", "Baja", "Ex cliente", "Solo consulta", "Pendiente de documentación")),
-            field("domicilio_real", "Domicilio real"), field("domicilio_legal", "Domicilio legal"), field("domicilio_fiscal", "Domicilio fiscal"), field("domicilio_explotacion", "Domicilio de explotación"),
-            field("whatsapp", "WhatsApp"), field("contacto_principal", "Contacto principal"), field("cargo_vinculo", "Cargo / vínculo"),
-            field("tipo_societario", "Tipo societario", ("SRL", "SA", "SAS", "Asociación civil", "Fundación", "Cooperativa", "Sociedad simple", "Sociedad de hecho", "Otro")),
-            field("fecha_constitucion", "Fecha de constitución"), field("fecha_inscripcion", "Fecha de inscripción"),
-            field("jurisdiccion_inscripcion", "Jurisdicción de inscripción", ("IGJ", "DPPJ Buenos Aires", "Registro Público Provincial", "Otra jurisdicción")), field("numero_inscripcion", "Número de inscripción"),
-            field("fecha_cierre_ejercicio", "Fecha de cierre de ejercicio"), field("representante_legal", "Representante legal"), field("socios", "Socios / accionistas"), field("administradores", "Administradores / gerentes / directores"), field("apoderados", "Apoderados"),
-            field("estado_societario", "Estado societario", ("Regular", "Pendiente", "Irregular", "En actualización", "Baja", "No corresponde")),
+            field("domicilio_real", "Domicilio real"), field("domicilio_fiscal", "Domicilio fiscal"), field("domicilio_explotacion", "Domicilio de explotación"),
+            field("telefono", "Teléfono"), field("whatsapp", "WhatsApp"), field("email", "Email"),
+            field("contacto_principal", "Contacto principal"), field("contacto_documentacion", "Contacto para documentación"),
+            field("contacto_pagos", "Contacto para pagos"), field("cargo_vinculo", "Cargo / vínculo"),
             field("observaciones", "Observaciones"),
         )),
         "servicio_presupuesto": ("Servicio y Presupuesto", (
@@ -47,13 +61,6 @@ class LedgerService:
             field("fecha_vencimiento", "Fecha de vencimiento"), field("fecha_cobro", "Fecha de cobro"),
             field("medio_pago", "Medio de cobro", ("Efectivo", "Transferencia", "Mercado Pago", "Débito", "Crédito", "Cheque", "Cuenta DNI", "MODO", "Otro")),
             field("comprobante_emitido", "Comprobante emitido", ("Sí", "No", "Pendiente", "No corresponde")), field("tipo_comprobante", "Tipo de comprobante", ("Factura A", "Factura B", "Factura C", "Recibo", "Nota de crédito", "Comprobante interno", "No corresponde")), field("numero_comprobante", "Número de comprobante"), field("observaciones", "Observaciones"),
-        )),
-        "obligaciones": ("Valores Mensuales", (
-            field("periodo", "Período MM/AAAA"), field("tipo_obligacion", "Tipo de obligación", ("Monotributo", "Responsable Inscripto", "IVA", "Ganancias", "Autónomos", "Bienes Personales", "IIBB Local", "Convenio Multilateral", "Régimen Simplificado IIBB", "Tasa Municipal", "Seguridad e Higiene", "Empleador / F.931", "Casas Particulares", "Abono del estudio", "Plan de pago", "Moratoria", "Otro")),
-            field("organismo", "Organismo", ("ARCA", "ARBA", "AGIP", "COMARB", "Municipio", "Ministerio de Trabajo", "Estudio", "Banco", "Otro")), field("categoria", "Categoría / encuadre"),
-            field("importe_mensual", "Importe mensual"), field("moneda", "Moneda", ("ARS", "USD", "Otro")),
-            field("fecha_vencimiento", "Fecha de vencimiento"), field("estado", "Estado", ("Pendiente", "Pagado", "Vencido", "No corresponde", "Bonificado", "En plan", "A revisar")),
-            field("fecha_pago", "Fecha de pago"), field("medio_pago", "Medio de pago", ("VEP", "Débito automático", "Transferencia", "Mercado Pago", "Efectivo", "Pago mis cuentas", "Homebanking", "Otro")), field("comprobante_link", "Comprobante / link"), field("observaciones", "Observaciones"),
         )),
         "relevamiento": ("Relevamiento", (
             field("actividad_principal", "Actividad principal real"), field("actividad_secundaria", "Actividad secundaria real"), field("actividades_declaradas", "Actividades declaradas"), field("fecha_inicio_real", "Fecha real de inicio"), field("fecha_inicio_fiscal", "Fecha fiscal de inicio"),
@@ -79,22 +86,6 @@ class LedgerService:
             field("sistema_control", "Sistema de control"),field("segmento", "Segmento"),
             field("foto_registrada", "Foto registrada"),field("firma_registrada", "Firma registrada"),field("huella_registrada", "Huella registrada"),
         )),
-        "contactos_arca": ("Contactos ARCA", (
-            field("clase", "Clase", ("Email", "Teléfono")),field("valor", "Dirección / número"),
-            field("tipo", "Tipo"),field("estado", "Estado"),field("fecha_actualizacion", "Fecha actualización"),
-            field("principal", "Principal", ("Sí", "No")),field("observaciones", "Observaciones"),
-        )),
-        "domicilios_arca": ("Domicilios ARCA", (
-            field("tipo", "Tipo de domicilio"),field("estado", "Estado"),field("direccion", "Dirección"),
-            field("localidad", "Localidad"),field("codigo_postal", "Código postal"),field("provincia", "Provincia"),
-            field("nomenclado", "Nomenclado"),field("fecha_baja", "Fecha baja"),field("fecha_actualizacion", "Fecha actualización"),
-            field("coordenadas", "Coordenadas"),field("observaciones", "Observaciones"),
-        )),
-        "migratorios_arca": ("Datos Migratorios", (
-            field("tipo_residencia", "Tipo de residencia"),field("vencimiento_migratorio", "Vencimiento migratorio"),
-            field("documento_extranjero", "Documento extranjero"),field("fecha_actualizacion", "Fecha actualización"),
-            field("observaciones", "Observaciones"),
-        )),
         "iibb_legajo": ("IIBB", (
             field("jurisdiccion", "Jurisdicción", ("Buenos Aires", "CABA", "Catamarca", "Chaco", "Chubut", "Córdoba", "Corrientes", "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja", "Mendoza", "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan", "San Luis", "Santa Cruz", "Santa Fe", "Santiago del Estero", "Tierra del Fuego", "Tucumán", "Otra")), field("regimen", "Régimen", ("Local", "Simplificado", "General", "Convenio Multilateral", "Exento", "No inscripto", "A revisar", "No corresponde")), field("actividad", "Actividad"), field("alicuota", "Alícuota"), field("estado", "Estado", ("Activo", "Baja", "En alta", "En regularización", "No inscripto", "No corresponde", "A revisar")), field("riesgo_fiscal", "Riesgo fiscal", ("Bajo", "Medio", "Alto", "Sin evaluar", "No corresponde")), field("estado_cm", "Estado Convenio Multilateral", ("Activo", "Pendiente de alta", "Baja", "En regularización", "No corresponde", "A revisar")), field("estado_control", "Estado del control", ("OK", "Revisar", "Urgente", "Pendiente", "No corresponde")), field("deuda", "Deuda", ("Sin deuda detectada", "Con deuda", "En plan", "A revisar", "No corresponde")), field("padrones", "Padrones", ("Controlado", "Pendiente", "A revisar", "No corresponde")), field("ultimo_control", "Último control"), field("observaciones", "Observaciones"),
         )),
@@ -103,9 +94,6 @@ class LedgerService:
         )),
         "laboral": ("Laboral", (
             field("empleador", "Empleador", ("Sí", "No", "En alta", "No corresponde", "A revisar")), field("condicion", "Estado laboral", ("Sin empleados", "Con empleados activos", "Casas particulares", "En regularización", "Baja como empleador", "A revisar", "No corresponde")), field("empleados", "Cantidad empleados"), field("convenio", "Convenio colectivo"), field("art", "ART", ("Vigente", "Pendiente", "No tiene", "No corresponde", "A revisar")), field("libro_sueldos", "Libro de sueldos digital", ("Activo", "Pendiente", "No corresponde", "A revisar")), field("f931", "F.931", ("Presentado", "Pendiente", "Vencido", "No corresponde", "A revisar")), field("cargas_sociales", "Cargas sociales", ("Al día", "Con deuda", "En plan", "A revisar", "No corresponde")), field("estado", "Estado / control"), field("ultimo_control", "Último control"), field("observaciones", "Observaciones"),
-        )),
-        "societario": ("Societario Libros", (
-            field("estado_societario", "Estado societario", ("Regular", "Pendiente", "Irregular", "En actualización", "Baja", "No corresponde", "A revisar")), field("libro", "Libro / registro", ("Libro Diario", "Inventario y Balances", "Actas", "Registro de socios", "Registro de acciones", "IVA Compras", "IVA Ventas", "Sueldos y Jornales", "Otro")), field("estado", "Estado", ("Rubricado", "Pendiente de rúbrica", "Digital", "No posee", "No corresponde", "A revisar")), field("ultima_registracion", "Última registración"), field("ultimo_periodo", "Último período"), field("periodo_pendiente", "Período pendiente"), field("observaciones", "Observaciones"),
         )),
         "bancos": ("Bancos", (
             field("tipo", "Tipo", ("Banco", "Billetera virtual", "Marketplace", "Posnet", "QR", "Tarjeta de crédito", "Tarjeta de débito", "Cuenta de tercero", "Otro")), field("entidad", "Entidad", ("Banco Galicia", "Banco Nación", "Banco Provincia", "Santander", "BBVA", "Macro", "Mercado Pago", "Mercado Libre", "MODO", "Getnet", "Payway", "Ualá", "Cuenta DNI", "Otro")), field("titularidad", "Titularidad", ("Propia", "De tercero", "Sociedad", "Familiar", "A revisar")), field("uso", "Uso", ("Actividad", "Personal", "Mixto", "No corresponde", "A revisar")), field("estado", "Estado", ("Activo", "Inactivo", "Baja", "Bloqueado", "A revisar")), field("extractos_solicitados", "Extractos solicitados", ("Sí", "No", "Pendiente", "No corresponde")), field("extractos_recibidos", "Extractos recibidos", ("Sí", "No", "Parcial", "No corresponde")), field("conciliacion", "Conciliación", ("Conciliado", "Pendiente", "Con diferencias", "No corresponde", "A revisar")), field("observaciones", "Observaciones"),
@@ -118,9 +106,6 @@ class LedgerService:
         )),
         "vencimientos_legajo": ("Vencimientos", (
             field("organismo", "Organismo", ("ARCA", "ARBA", "AGIP", "COMARB", "Municipio", "IGJ", "DPPJ", "Ministerio de Trabajo", "Banco", "Estudio", "Otro")), field("impuesto_tramite", "Impuesto / trámite"), field("periodo", "Período"), field("fecha_vencimiento", "Fecha vencimiento"), field("tipo", "Tipo", ("Presentación", "Pago", "Renovación", "Recategorización", "Alta", "Baja", "Modificación", "Informe", "Control", "Reunión", "Respuesta a intimación", "Vencimiento de certificado", "Vencimiento contractual", "Otro")), field("estado", "Estado", ("Pendiente", "Cumplido", "Pagado", "Vencido", "No corresponde")), field("link", "Link al comprobante / presentación / carpeta"), field("particularidad", "Particularidad del cliente"), field("requiere_documentacion", "Requiere documentación", ("Sí", "No", "A revisar", "No corresponde")), field("documentacion_pendiente", "Documentación pendiente", ("Sí", "No", "Parcial", "No corresponde")), field("alerta", "Alerta", ("Sí", "No")), field("fecha_aviso", "Fecha de aviso al cliente"), field("medio_aviso", "Medio aviso", ("WhatsApp", "Email", "Llamada", "Presencial", "No avisado", "Otro")), field("observaciones", "Observaciones"),
-        )),
-        "baja_historial": ("Historial y Baja", (
-            field("tipo_cambio", "Tipo de cambio", ("Alta", "Modificación de datos", "Cambio de condición fiscal", "Cambio de servicio", "Cambio de honorarios", "Cambio de estado", "Baja del cliente", "Reactivación", "Otro")), field("dato_modificado", "Dato modificado"), field("estado_anterior", "Estado anterior"), field("estado_nuevo", "Estado nuevo"), field("responsable", "Responsable"), field("motivo", "Motivo", ("Decisión del cliente", "Falta de pago", "Falta de documentación", "Finalización de trámite", "Cambio de contador", "Cese de actividad", "Incumplimiento del cliente", "Otro")), field("fecha_baja", "Fecha baja"), field("ultimo_periodo", "Último período trabajado"), field("documentacion_entregada", "Documentación entregada"), field("pendientes", "Deudas o pendientes"), field("tramites_curso", "Trámites en curso"), field("accesos_eliminados", "Claves devueltas o accesos eliminados"), field("comunicacion_enviada", "Comunicación enviada al cliente"), field("estado_final", "Estado final del legajo"), field("observaciones", "Observaciones"),
         )),
     }
 
@@ -251,22 +236,19 @@ class LedgerService:
         overdue_payments = [r for r in pending_payments if r["vencimiento"] and r["vencimiento"] < today]
         pending_docs = [r for r in records if r["seccion"] == "documentacion" and r["estado"].casefold() not in ("recibido", "aprobado", "no corresponde")]
         risks = [r for r in records if r["seccion"] == "riesgos" and r["estado"].casefold() not in ("regularizado", "no corresponde")]
-        obligations = [r for r in records if r["seccion"] == "obligaciones" and r["estado"].casefold() not in ("pagado", "no corresponde", "bonificado")]
-        overdue_obligations = [r for r in obligations if r["vencimiento"] and r["vencimiento"] < today]
         ledger_tasks = [r for r in records if r["seccion"] == "eventos" and r["estado"].casefold() not in ("finalizado", "cancelado", "no corresponde")]
         overdue_ledger_tasks = [r for r in ledger_tasks if r["vencimiento"] and r["vencimiento"] < today]
         tasks = self.database.query_one("SELECT COUNT(*) n,SUM(CASE WHEN fecha_vencimiento<DATE('now') THEN 1 ELSE 0 END) vencidas FROM tareas WHERE cliente_id=? AND LOWER(estado) NOT IN ('finalizado','archivado','cobrado','cumplimentada','cancelada','no corresponde')", (client_id,))
         due = self.database.query_one("SELECT MIN(fecha_vencimiento) fecha FROM vencimientos WHERE cliente_id=? AND LOWER(estado) NOT IN ('pagado','cumplido','no corresponde') AND fecha_vencimiento BETWEEN ? AND ?", (client_id, today, soon))
-        generic_due = min((r["vencimiento"] for r in records if r["vencimiento"] and r["estado"].casefold() not in ("pagado", "finalizado", "no corresponde")), default=None)
-        completed_sections = len({r["seccion"] for r in records})
-        state = "Completo" if completed_sections >= 10 and not pending_docs else "Incompleto"
+        generic_due = min((r["vencimiento"] for r in records if r["seccion"] in self.VISIBLE_SECTIONS and r["vencimiento"] and r["estado"].casefold() not in ("pagado", "finalizado", "no corresponde")), default=None)
+        completed_sections = len({r["seccion"] for r in records if r["seccion"] in self.VISIBLE_SECTIONS})
+        state = "Completo" if completed_sections >= 8 and not pending_docs else "Incompleto"
         risk_values = [json.loads(r["datos_json"] or "{}").get("nivel", "") for r in risks]
         risk_level = "Alto" if any(value.casefold() in ("alto", "urgente") for value in risk_values) else ("Medio" if risks else "Bajo")
         service = latest_value("servicio_presupuesto", "tipo_servicio", "concepto", default="Sin definir")
         activity = latest_value("relevamiento", "actividad_principal", default=dict(client).get("actividad", ""))
         client_type = latest_value("datos_complementarios", "tipo_cliente", default=str(dict(client).get("tipo_persona", "")).replace("_", " ").title())
         client_state = latest_value("datos_complementarios", "estado_cliente", default=str(dict(client).get("estado", "")).title())
-        responsible = latest_value("datos_complementarios", "responsable_interno") or latest_value("servicio_presupuesto", "responsable") or "NATALIA"
         controls = []
         for section in ("arca", "iibb_legajo", "municipal", "laboral", "bancos", "eventos"):
             value = latest_value(section, "ultimo_control", "fecha_control", "fecha")
@@ -299,14 +281,14 @@ class LedgerService:
             "Documentación": documentation_state,
             "ARCA": area_state("arca"), "IIBB": area_state("iibb_legajo"),
             "Municipal": area_state("municipal"), "Laboral": area_state("laboral"),
-            "Societario": area_state("societario"), "Bancos": area_state("bancos"),
+            "Bancos": area_state("bancos"),
             "Pagos": payment_state, "Riesgos": risk_level,
         }
         return {
             "client": dict(client), "estado_legajo": state,
             "tipo_cliente": client_type, "estado_cliente": client_state,
             "servicio_contratado": service, "actividad_principal": activity,
-            "responsable_interno": responsible, "ultimo_control": last_control,
+            "ultimo_control": last_control,
             "ultimo_contacto": last_contact, "estado_documentacion": documentation_state,
             "estado_pagos": payment_state,
             "pagos_pendientes": len(pending_payments), "pagos_vencidos": len(overdue_payments),
@@ -316,11 +298,9 @@ class LedgerService:
             "total_pendiente": round(sum(float(r["saldo"] or 0) for r in pending_payments), 2),
             "documentacion_pendiente": len(pending_docs), "tareas_pendientes": int(tasks["n"] or 0) + len(ledger_tasks),
             "tareas_vencidas": int(tasks["vencidas"] or 0) + len(overdue_ledger_tasks),
-            "obligaciones_pendientes": len(obligations), "obligaciones_vencidas": len(overdue_obligations),
             "proximo_vencimiento": min([value for value in (due["fecha"] if due and due["fecha"] else None, generic_due) if value], default="—"),
             "riesgo_general": risk_level, "observacion_ejecutiva": dict(client).get("observaciones", ""),
             "estados_area": area_states,
-            "ultima_actualizacion": max((r["actualizado_en"] for r in records), default=dict(client).get("actualizado_en", "")),
         }
 
     def master_index(self, search: str = "") -> list[dict]:

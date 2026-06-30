@@ -138,7 +138,6 @@ class DashboardView(ttk.Frame):
             ("Reportes", lambda: self.app.show_view("reportes")),
             ("Vencimientos", lambda: self.app.show_view("vencimientos")),
             ("Honorarios / Pagos", lambda: self.app.show_view("honorarios")),
-            ("Valores mensuales / Obligaciones", lambda: self.app.show_view("clientes")),
             ("Documentación pendiente", lambda: DashboardDetailDialog(self, self.app, "Documentación pendiente", self.app.dashboard_service.alert_clients("documentacion_pendiente"), "Pendiente")),
             ("Alertas activas", lambda: self.notebook_select_alerts(notebook)),
         )

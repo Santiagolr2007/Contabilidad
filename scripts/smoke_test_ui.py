@@ -17,6 +17,18 @@ from models import Client, FiscalProfile, MonotributoProfile  # noqa: E402
 
 
 def main() -> None:
+    def widget_texts(widget) -> list[str]:
+        texts = []
+        for child in widget.winfo_children():
+            try:
+                value = child.cget("text")
+            except Exception:
+                value = ""
+            if value:
+                texts.append(str(value))
+            texts.extend(widget_texts(child))
+        return texts
+
     def fail_dialog(title, message, **_kwargs):
         raise RuntimeError(f"{title}: {message}")
 
@@ -66,6 +78,8 @@ def main() -> None:
                 assert application.current_view.details.pages[0].horizontal
                 print("OK: 14 solapas y doble scroll de Responsable Inscripto", flush=True)
             elif route == "clientes":
+                client_text = " | ".join(widget_texts(application.current_view))
+                assert "Sistema Registral" not in client_text
                 dialog = ClientForm(
                     application.current_view, application, None, lambda: None
                 )
@@ -78,8 +92,15 @@ def main() -> None:
                         application.current_view, application, int(clients[0]["id"])
                     )
                     ledger.update_idletasks()
+                    tab_names = [str(button.cget("text")) for button in ledger.notebook.buttons]
+                    assert len(tab_names) == 14
+                    for removed in (
+                        "Valores Mensuales", "Contactos ARCA", "Domicilios ARCA",
+                        "Datos Migratorios", "Societario Libros", "Historial",
+                    ):
+                        assert removed not in tab_names
                     ledger.destroy()
-                    print("OK: legajo integral", flush=True)
+                    print("OK: legajo integral simplificado con 14 solapas", flush=True)
             elif route in ("tareas", "vencimientos", "honorarios"):
                 dialog = RecordDialog(
                     application.current_view,
