@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from utils.formatters import display_date, display_period, money
 
 from .common import MetricCard, ScrollableFrame, fit_window, selected_tree_id
-from .date_widgets import DateEntry
+from .date_widgets import DateEntry, ask_date
 from .theme import COLORS
 
 
@@ -82,14 +82,21 @@ class ClientLedgerDialog(tk.Toplevel):
         summary = app.ledger_service.summary(client_id)
         client = summary["client"]
         ttk.Label(top, text=client["nombre_razon_social"], style="Title.TLabel").pack(side="left")
-        ttk.Label(top, text=f"CUIT {client['cuit_cuil']}", style="Subtitle.TLabel").pack(side="left", padx=12)
+        ttk.Label(top, text=f"Legajo {client.get('legajo', '—')} · CUIT {client['cuit_cuil']}", style="Subtitle.TLabel").pack(side="left", padx=12)
         ttk.Button(top, text="Exportar legajo", style="Primary.TButton", command=self.export_full).pack(side="right")
         ttk.Button(top, text="Cerrar", command=self.destroy).pack(side="right", padx=8)
         self.notebook = TwoRowNotebook(self)
         self.notebook.pack(fill="both", expand=True, padx=14, pady=(0, 14))
         self._summary_tab()
         self._data_tab()
-        for section in app.ledger_service.VISIBLE_SECTIONS:
+        for section in ("servicio_presupuesto", "pagos"):
+            self._records_tab(section)
+        self._monotributo_tab()
+        self._responsible_profile_tab()
+        for section in (
+            "relevamiento", "arca", "iibb_legajo", "municipal", "laboral",
+            "bancos", "documentacion", "riesgos", "eventos", "vencimientos_legajo",
+        ):
             self._records_tab(section)
 
     @staticmethod
@@ -114,10 +121,10 @@ class ClientLedgerDialog(tk.Toplevel):
     @staticmethod
     def _status_tag(status: str) -> str:
         value = status.casefold()
-        if value in ("pagado", "cobrado", "cumplido", "cumplimentada", "ok", "activo"): return "green"
-        if value in ("pendiente", "cobro parcial", "pago parcial"): return "yellow"
-        if value in ("en proceso", "bonificado"): return "blue"
-        if value in ("esperando cliente", "esperando organismo"): return "orange"
+        if value in ("pagado", "cobrado", "cumplido", "cumplimentada", "ok", "activo", "recibido"): return "green"
+        if value in ("pendiente", "cobro parcial", "pago parcial", "requiere actualización"): return "yellow"
+        if value in ("en proceso", "bonificado", "solicitado"): return "blue"
+        if value in ("esperando cliente", "esperando organismo", "incompleto"): return "orange"
         if value in ("vencido", "vencida", "urgente"): return "red"
         return "gray"
 
@@ -129,7 +136,7 @@ class ClientLedgerDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=(
-                f"{client['nombre_razon_social']} · CUIT/CUIL {client['cuit_cuil']} · "
+                f"Legajo {client.get('legajo', '—')} · {client['nombre_razon_social']} · CUIT {client['cuit_cuil']} · "
                 f"{summary['tipo_cliente']} · {str(client.get('regimen_principal') or '').replace('_', ' ').title()}\n"
                 f"Servicio: {summary['servicio_contratado']} · Estado: {summary['estado_cliente']} · "
                 f"Actividad: {summary['actividad_principal'] or 'Sin cargar'}\n"
@@ -176,14 +183,22 @@ class ClientLedgerDialog(tk.Toplevel):
                 "SELECT * FROM clientes WHERE id=?", (self.client_id,)
             )
             if row:
-                for key, value in dict(row).items():
-                    if key in ("id", "creado_en", "actualizado_en"):
-                        continue
+                values = dict(row)
+                ordered = (
+                    ("fecha_alta_estudio", "Fecha de alta en el estudio"), ("legajo", "Legajo"),
+                    ("nombre_razon_social", "Cliente"), ("cuit_cuil", "CUIT"), ("dni", "DNI"),
+                    ("fecha_nacimiento", "Fecha de nacimiento"), ("nacionalidad", "Nacionalidad"),
+                    ("estado_civil", "Estado civil"), ("tipo_persona_detalle", "Tipo de persona"),
+                    ("instagram", "Instagram"), ("telefono", "Teléfono"), ("email", "Mail"),
+                    ("domicilio", "Domicilio"), ("codigo_actividad", "Código de actividad"),
+                    ("actividad", "Actividad"), ("estado_detalle", "Estado"), ("rubro", "Rubro"),
+                    ("observaciones", "Observaciones"),
+                )
+                for key, label in ordered:
+                    value = values.get(key, "")
                     if key.startswith("fecha"):
                         value = display_date(str(value or ""))
-                    tree.insert(
-                        "", "end", values=(key.replace("_", " ").title(), value or "")
-                    )
+                    tree.insert("", "end", values=(label, value or ""))
             records = self.app.ledger_service.list_records(
                 self.client_id, "datos_complementarios"
             )
@@ -225,6 +240,92 @@ class ClientLedgerDialog(tk.Toplevel):
         ttk.Button(actions, text="Exportar esta solapa", command=lambda: self.export_sections(["datos_cliente"])).pack(side="right")
         refresh()
 
+    def _open_client_form(self, callback) -> None:
+        from .clients_view import ClientForm
+        ClientForm(self, self.app, self.client_id, callback)
+
+    def _monotributo_tab(self) -> None:
+        frame = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(frame, text="Monotributo")
+        tk.Label(
+            frame, text="Perfil Monotributo", bg="#DCE8F2", fg="#24415C",
+            font=("Segoe UI", 12, "bold"), padx=12, pady=7,
+        ).pack(fill="x", pady=(0, 7))
+        tree = self._tree(frame, ("campo", "valor"), {"campo": 310, "valor": 650})
+        rows: list[dict] = []
+        labels = {
+            "categoria_actual": "Categoría actual", "actividad_fiscal": "Actividad fiscal",
+            "codigo_actividad": "Código de actividad", "denominacion": "Denominación",
+            "fecha_alta": "Fecha de alta", "fecha_baja_monotributo": "Fecha de baja",
+            "estado": "Estado", "tipo_actividad": "Tipo de actividad",
+            "aporta_sipa": "Aporta SIPA", "aporta_obra_social": "Aporta obra social",
+            "adherentes_obra_social": "Adherentes de obra social",
+            "condicion_especial": "Condición especial",
+            "observaciones_fiscales": "Observaciones fiscales",
+        }
+
+        def refresh() -> None:
+            for item in tree.get_children():
+                tree.delete(item)
+            rows.clear()
+            raw = self.app.database.query_one(
+                "SELECT * FROM monotributo_cliente WHERE cliente_id=?", (self.client_id,)
+            )
+            values = dict(raw) if raw else {}
+            for key, label in labels.items():
+                value = values.get(key, "")
+                if key.startswith("fecha"):
+                    value = display_date(str(value or ""))
+                tree.insert("", "end", values=(label, value or ""))
+                rows.append({"Campo": label, "Valor": value or ""})
+
+        def export(format_name: str) -> None:
+            extension = f".{format_name}"
+            filename = filedialog.asksaveasfilename(
+                parent=self, defaultextension=extension,
+                initialfile=f"Monotributo_{date.today().isoformat()}{extension}",
+                filetypes=((format_name.upper(), f"*{extension}"),),
+            )
+            if not filename:
+                return
+            method = self.app.report_service.export_table_excel if format_name == "xlsx" else self.app.report_service.export_table_pdf
+            client = self.app.ledger_service.summary(self.client_id)["client"]
+            method(Path(filename), "Monotributo", rows, f"{client['nombre_razon_social']} · Legajo {client.get('legajo','')} · CUIT {client['cuit_cuil']}")
+            messagebox.showinfo("Exportación terminada", f"Se creó:\n{filename}", parent=self)
+
+        actions = ttk.Frame(frame); actions.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions, text="Modificar ficha", command=lambda: self._open_client_form(refresh)).pack(side="left")
+        ttk.Button(actions, text="Exportar PDF", command=lambda: export("pdf")).pack(side="right")
+        ttk.Button(actions, text="Exportar Excel", command=lambda: export("xlsx")).pack(side="right", padx=6)
+        refresh()
+
+    def _responsible_profile_tab(self) -> None:
+        frame = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(frame, text="Responsable Inscripto")
+        tk.Label(
+            frame, text="Perfil Responsable Inscripto", bg="#C9DAEC", fg="#1D3F66",
+            font=("Segoe UI", 12, "bold"), padx=12, pady=7,
+        ).pack(fill="x", pady=(0, 7))
+        tree = self._tree(frame, ("seccion", "campo", "valor"), {"seccion": 210, "campo": 330, "valor": 500})
+
+        def refresh() -> None:
+            for item in tree.get_children():
+                tree.delete(item)
+            values = self.app.responsible_service.profile(self.client_id)
+            for section, fields in self.app.responsible_service.PROFILE_SECTIONS:
+                for key, label, kind in fields:
+                    value = values.get(key, "")
+                    if kind == "date":
+                        value = display_date(str(value or ""))
+                    elif kind == "period":
+                        value = display_period(str(value or ""))
+                    tree.insert("", "end", values=(section, label, value or ""))
+
+        actions = ttk.Frame(frame); actions.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions, text="Modificar ficha", command=lambda: self._open_client_form(refresh)).pack(side="left")
+        ttk.Button(actions, text="Exportar esta solapa", command=lambda: self.export_sections(["responsable_inscripto"])).pack(side="right")
+        refresh()
+
     def _records_tab(self, section: str) -> None:
         title = self.app.ledger_service.SECTIONS[section][0]
         frame = ttk.Frame(self.notebook, padding=10)
@@ -232,6 +333,7 @@ class ClientLedgerDialog(tk.Toplevel):
         toolbar = ttk.Frame(frame)
         toolbar.pack(fill="x", pady=(0, 7))
         search = tk.StringVar()
+        state_filter = tk.StringVar(value="Todos")
         tree = self._tree(frame, ("descripcion", "periodo", "estado", "importe", "saldo", "vencimiento"), {"descripcion": 340, "periodo": 90, "estado": 140, "importe": 110, "saldo": 110, "vencimiento": 100})
         totals = ttk.Label(frame, text="", style="Subtitle.TLabel")
         totals.pack(fill="x", pady=(7, 0))
@@ -242,6 +344,12 @@ class ClientLedgerDialog(tk.Toplevel):
             term = search.get().strip().casefold()
             if term:
                 rows = [row for row in rows if term in str(row).casefold()]
+            selected_state = state_filter.get()
+            if section == "documentacion" and selected_state != "Todos":
+                if selected_state == "Obligatorios":
+                    rows = [row for row in rows if str(row["datos"].get("obligatorio", "")).casefold() == "sí"]
+                else:
+                    rows = [row for row in rows if str(row["estado"]).casefold() == selected_state.casefold()]
             for row in rows:
                 tag = self._status_tag(str(row["estado"]))
                 tree.insert("", "end", iid=str(row["id"]), values=(row["descripcion"], display_period(row["periodo"]), row["estado"], money(row["importe"]), money(row["saldo"]), display_date(row["vencimiento"])), tags=(tag,))
@@ -289,7 +397,7 @@ class ClientLedgerDialog(tk.Toplevel):
             if section == "pagos":
                 total = float(data.get("importe_facturado") or record.get("importe") or 0)
                 if state in ("Cobrado", "Cobro parcial"):
-                    entered_date = simpledialog.askstring("Fecha de cobro", "Fecha (DD/MM/AAAA):", parent=self, initialvalue=date.today().strftime("%d/%m/%Y"))
+                    entered_date = ask_date(self, "Fecha de cobro", "Seleccioná la fecha de cobro:", date.today())
                     if entered_date is None: return
                     from utils.formatters import normalize_date
                     try: data["fecha_cobro"] = normalize_date(entered_date)
@@ -311,6 +419,24 @@ class ClientLedgerDialog(tk.Toplevel):
             self.app.ledger_service.save_record(self.client_id, section, data, record_id)
             refresh()
 
+        def mark_received() -> None:
+            record_id = selected_tree_id(tree)
+            if record_id is None:
+                messagebox.showinfo("Seleccionar documento", "Seleccioná un documento.", parent=self)
+                return
+            entered = ask_date(self, "Marcar como recibido", "Fecha de recepción:", date.today())
+            if entered is None:
+                return
+            from utils.formatters import normalize_date
+            record = self.app.ledger_service.get_record(record_id)
+            if not record:
+                return
+            data = dict(record["datos"])
+            data["estado"] = "Recibido"
+            data["fecha_recepcion"] = normalize_date(entered)
+            self.app.ledger_service.save_record(self.client_id, section, data, record_id)
+            refresh()
+
         ttk.Button(toolbar, text="+ Agregar", style="Primary.TButton", command=lambda: LedgerRecordDialog(self, self.app, self.client_id, section, refresh)).pack(side="left")
         ttk.Button(toolbar, text="Modificar", command=edit).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Eliminar", command=delete).pack(side="left")
@@ -320,6 +446,9 @@ class ClientLedgerDialog(tk.Toplevel):
         elif section == "servicio_presupuesto":
             ttk.Button(toolbar, text="Aceptar", command=lambda: mark_state("Aceptado", "estado_presupuesto")).pack(side="left", padx=(6, 0))
             ttk.Button(toolbar, text="Rechazar", command=lambda: mark_state("Rechazado", "estado_presupuesto")).pack(side="left", padx=4)
+        elif section == "documentacion":
+            ttk.Button(toolbar, text="Marcar como recibido", command=mark_received).pack(side="left", padx=(6, 0))
+            ttk.Combobox(toolbar, textvariable=state_filter, values=("Todos", "Recibido", "Pendiente", "Incompleto", "Vencido", "Obligatorios", "No corresponde", "Requiere actualización"), state="readonly", width=19).pack(side="right", padx=(6, 0))
         ttk.Entry(toolbar, textvariable=search, width=16).pack(side="right", padx=(6, 0))
         ttk.Button(toolbar, text="Filtrar", command=refresh).pack(side="right")
         ttk.Button(toolbar, text="Exportar esta solapa", command=lambda: self.export_sections([section])).pack(side="right")
@@ -343,18 +472,32 @@ class LedgerRecordDialog(tk.Toplevel):
         footer = ttk.Frame(self, padding=10); footer.pack(side="bottom", fill="x")
         ttk.Button(footer, text="Cancelar", command=self.destroy).pack(side="right")
         ttk.Button(footer, text="Guardar", style="Primary.TButton", command=self.save).pack(side="right", padx=8)
-        scroll = ScrollableFrame(self, padding=16); scroll.pack(fill="both", expand=True); body = scroll.content
+        style = ttk.Style(self)
+        style.configure("LedgerLabel.TLabel", background="#DED8CC", foreground="#334155", padding=(7, 5))
+        style.configure("LedgerValue.TEntry", fieldbackground="#FBFAF7", padding=4)
+        scroll = ScrollableFrame(self, padding=16, horizontal=True); scroll.pack(fill="both", expand=True); body = scroll.content
         self.vars = {}
         self.multi_widgets: dict[str, tk.Listbox] = {}
-        for row, (key, label, options) in enumerate(app.ledger_service.SECTIONS[section][1]):
-            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
+        self.budget_map = {
+            str(record["datos"].get("numero_presupuesto") or record.get("numero_presupuesto") or ""): record["datos"]
+            for record in app.ledger_service.list_records(client_id, "servicio_presupuesto")
+            if record["datos"].get("numero_presupuesto") or record.get("numero_presupuesto")
+        }
+        for row, (key, label, options) in enumerate(app.ledger_service.section_fields(client_id, section)):
+            ttk.Label(body, text=label, style="LedgerLabel.TLabel").grid(row=row, column=0, sticky="ew", pady=3)
             var = tk.StringVar(); self.vars[key] = var
             is_multi = (
                 (section == "servicio_presupuesto" and key == "tipo_servicio")
                 or (section == "vencimientos_legajo" and key == "tipo")
                 or (section == "iibb_legajo" and key == "jurisdiccion")
+                or bool(options and options[0] == "multi")
             )
-            if is_multi and options:
+            if key == "numero_presupuesto" and section == "pagos":
+                values = ("Sin presupuesto asociado", *self.budget_map.keys())
+                widget = ttk.Combobox(body, textvariable=var, values=values, state="readonly")
+                var.set(values[0])
+                widget.bind("<<ComboboxSelected>>", lambda _event: self._apply_budget())
+            elif is_multi and options:
                 widget = tk.Listbox(
                     body,
                     selectmode="multiple",
@@ -363,7 +506,7 @@ class LedgerRecordDialog(tk.Toplevel):
                     borderwidth=1,
                     relief="solid",
                 )
-                for option in options:
+                for option in (options[1:] if options and options[0] == "multi" else options):
                     widget.insert("end", option)
                 self.multi_widgets[key] = widget
                 tk.Label(
@@ -383,16 +526,18 @@ class LedgerRecordDialog(tk.Toplevel):
                     wraplength=300,
                     font=("Segoe UI", 8),
                 ).grid(row=row, column=2, sticky="w", padx=(8, 0), pady=4)
-            elif key.startswith("fecha") or key == "vencimiento":
+            elif "fecha" in key or key == "vencimiento":
                 widget = DateEntry(body, var)
             else:
                 widget = ttk.Entry(
                     body,
                     textvariable=var,
                     show="•" if "contrasena" in key else "",
+                    style="LedgerValue.TEntry",
                 )
             widget.grid(row=row, column=1, sticky="ew", padx=8, pady=4)
         body.columnconfigure(1, weight=1)
+        body.columnconfigure(0, minsize=250)
         if record_id:
             record = app.ledger_service.get_record(record_id)
             if record:
@@ -404,12 +549,28 @@ class LedgerRecordDialog(tk.Toplevel):
                             if widget.get(index) in selected:
                                 widget.selection_set(index)
                     elif key in self.vars:
-                        if key.startswith("fecha") or key == "vencimiento":
+                        if "fecha" in key or key == "vencimiento":
                             self.vars[key].set(display_date(str(value or "")))
                         elif key == "periodo":
                             self.vars[key].set(display_period(str(value or "")))
                         else:
                             self.vars[key].set(str(value or ""))
+
+    def _apply_budget(self) -> None:
+        number = self.vars.get("numero_presupuesto", tk.StringVar()).get()
+        budget = self.budget_map.get(number)
+        if not budget:
+            return
+        mapping = {
+            "concepto": budget.get("descripcion") or budget.get("concepto", ""),
+            "periodo": display_period(str(budget.get("periodo") or "")),
+            "importe_facturado": budget.get("valor_presupuestado", ""),
+            "saldo_pendiente": budget.get("saldo_pendiente") or budget.get("valor_presupuestado", ""),
+            "fecha_vencimiento": display_date(str(budget.get("fecha_vencimiento") or "")),
+        }
+        for key, value in mapping.items():
+            if key in self.vars:
+                self.vars[key].set(str(value or ""))
 
     def save(self) -> None:
         try:

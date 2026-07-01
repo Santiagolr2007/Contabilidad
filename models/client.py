@@ -8,6 +8,8 @@ class Client:
     nombre_razon_social: str
     cuit_cuil: str
     tipo_persona: str = "persona_humana"
+    legajo: str = ""
+    tipo_persona_detalle: str = ""
     dni: str = ""
     fecha_nacimiento: str = ""
     nacionalidad: str = ""
@@ -16,9 +18,12 @@ class Client:
     email: str = ""
     instagram: str = ""
     domicilio: str = ""
+    codigo_actividad: str = ""
+    actividad: str = ""
     rubro: str = ""
     fecha_alta_estudio: str = ""
     estado: str = "activo"
+    estado_detalle: str = ""
     observaciones: str = ""
     id: int | None = None
 

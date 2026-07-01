@@ -7,7 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from models import Client, FiscalProfile, MonotributoProfile
-from utils.formatters import display_date, normalize_date, number_ar
+from utils.formatters import display_date, normalize_date, normalize_period, number_ar
 from utils.validators import positive_number
 from services.iibb_service import ARGENTINA_JURISDICTIONS
 
@@ -76,8 +76,8 @@ class ClientsView(ttk.Frame):
             combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
 
         columns = (
-            "seleccionar", "cuit", "tipo", "actividad", "regimen", "categoria", "estado",
-            "servicio", "legajo", "pagos", "documentacion", "riesgo",
+            "seleccionar", "legajo", "cuit", "tipo", "actividad", "regimen", "categoria", "estado",
+            "servicio", "estado_legajo", "pagos", "documentacion", "riesgo",
             "ultimo_control", "vencimiento", "observaciones",
         )
         tree_frame = ttk.Frame(self)
@@ -89,6 +89,7 @@ class ClientsView(ttk.Frame):
         self.tree.column("#0", width=240)
         settings = (
             ("seleccionar", "Sel.", 48),
+            ("legajo", "Legajo", 90),
             ("cuit", "CUIT/CUIL", 110),
             ("tipo", "Persona", 110),
             ("actividad", "Actividad", 190),
@@ -96,7 +97,7 @@ class ClientsView(ttk.Frame):
             ("categoria", "Categoría", 75),
             ("estado", "Estado", 80),
             ("servicio", "Servicio contratado", 155),
-            ("legajo", "Estado legajo", 105),
+            ("estado_legajo", "Estado legajo", 105),
             ("pagos", "Pagos", 95),
             ("documentacion", "Documentación", 110),
             ("riesgo", "Riesgo", 80),
@@ -106,7 +107,7 @@ class ClientsView(ttk.Frame):
         )
         for column, label, width in settings:
             self.tree.heading(column, text=label)
-            self.tree.column(column, width=width, anchor="center" if column in ("seleccionar", "cuit", "tipo", "categoria", "estado", "legajo", "pagos", "documentacion", "riesgo", "ultimo_control", "vencimiento") else "w")
+            self.tree.column(column, width=width, anchor="center" if column in ("seleccionar", "legajo", "cuit", "tipo", "categoria", "estado", "estado_legajo", "pagos", "documentacion", "riesgo", "ultimo_control", "vencimiento") else "w")
         tree_y = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         tree_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=tree_y.set, xscrollcommand=tree_x.set)
@@ -166,7 +167,7 @@ class ClientsView(ttk.Frame):
         for client in clients:
             summary = self.app.ledger_service.summary(int(client["id"]))
             if term and term not in " ".join((
-                str(client["nombre_razon_social"]), str(client["cuit_cuil"]),
+                str(client["nombre_razon_social"]), str(client["cuit_cuil"]), str(client.get("legajo", "")),
                 str(client.get("rubro_display", "")), summary["tipo_cliente"],
                 summary["estado_cliente"],
                 summary["servicio_contratado"], summary["actividad_principal"],
@@ -197,6 +198,7 @@ class ClientsView(ttk.Frame):
                 text=client["nombre_razon_social"],
                 values=(
                     "☑" if int(client["id"]) in self.checked_client_ids else "☐",
+                    client.get("legajo", ""),
                     client["cuit_cuil"],
                     summary["tipo_cliente"],
                     client.get("rubro_display", ""),
@@ -383,6 +385,10 @@ class ClientForm(tk.Toplevel):
         self.transient(parent.winfo_toplevel())
         self.grab_set()
         self.bind("<Control-s>", lambda _event: self.save())
+        style = ttk.Style(self)
+        style.configure("FormLabel.TLabel", background="#DED8CC", foreground="#334155", padding=(7, 5))
+        style.configure("FormValue.TEntry", fieldbackground="#FBFAF7", padding=4)
+        style.configure("FormValue.TCombobox", fieldbackground="#FBFAF7", padding=3)
 
         # La barra se empaqueta primero y queda siempre visible al pie.
         footer = ttk.Frame(self, padding=(16, 10, 16, 14))
@@ -404,20 +410,23 @@ class ClientForm(tk.Toplevel):
         self.vars: dict[str, tk.StringVar] = {}
         notebook = ttk.Notebook(self)
         notebook.pack(side="top", fill="both", expand=True, padx=16, pady=(16, 0))
-        general_scroll = ScrollableFrame(notebook, padding=18)
-        fiscal_scroll = ScrollableFrame(notebook, padding=18)
-        mono_scroll = ScrollableFrame(notebook, padding=18)
-        iibb_scroll = ScrollableFrame(notebook, padding=18)
-        alerts_scroll = ScrollableFrame(notebook, padding=18)
-        notebook.add(general_scroll, text="Datos generales")
+        general_scroll = ScrollableFrame(notebook, padding=18, horizontal=True)
+        fiscal_scroll = ScrollableFrame(notebook, padding=18, horizontal=True)
+        mono_scroll = ScrollableFrame(notebook, padding=18, horizontal=True)
+        responsible_scroll = ScrollableFrame(notebook, padding=18, horizontal=True)
+        iibb_scroll = ScrollableFrame(notebook, padding=18, horizontal=True)
+        alerts_scroll = ScrollableFrame(notebook, padding=18, horizontal=True)
+        notebook.add(general_scroll, text="Datos del Cliente")
         notebook.add(fiscal_scroll, text="Regímenes")
         notebook.add(mono_scroll, text="Monotributo")
+        notebook.add(responsible_scroll, text="Responsable Inscripto")
         notebook.add(iibb_scroll, text="Ingresos Brutos")
         notebook.add(alerts_scroll, text="Alertas")
 
         self._build_general(general_scroll.content)
         self._build_fiscal(fiscal_scroll.content)
         self._build_monotributo(mono_scroll.content)
+        self._build_responsible(responsible_scroll.content)
         self._build_iibb(iibb_scroll.content)
         self._build_alerts(alerts_scroll.content)
 
@@ -428,9 +437,9 @@ class ClientForm(tk.Toplevel):
         self, parent, row: int, label: str, key: str, width: int = 35,
         help_text: str = "",
     ) -> ttk.Entry:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
+        ttk.Label(parent, text=label, style="FormLabel.TLabel").grid(row=row, column=0, sticky="ew", pady=3)
         variable = self.vars.setdefault(key, tk.StringVar())
-        entry = ttk.Entry(parent, textvariable=variable, width=width)
+        entry = ttk.Entry(parent, textvariable=variable, width=width, style="FormValue.TEntry")
         entry.grid(row=row, column=1, sticky="ew", padx=(12, 0), pady=5)
         if help_text:
             ttk.Label(
@@ -444,9 +453,9 @@ class ClientForm(tk.Toplevel):
         self, parent, row: int, label: str, key: str, values,
         help_text: str = "",
     ) -> ttk.Combobox:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
+        ttk.Label(parent, text=label, style="FormLabel.TLabel").grid(row=row, column=0, sticky="ew", pady=3)
         variable = self.vars.setdefault(key, tk.StringVar())
-        combo = ttk.Combobox(parent, textvariable=variable, values=values, state="readonly")
+        combo = ttk.Combobox(parent, textvariable=variable, values=values, state="readonly", style="FormValue.TCombobox")
         combo.grid(row=row, column=1, sticky="ew", padx=(12, 0), pady=5)
         if help_text:
             ttk.Label(
@@ -459,7 +468,7 @@ class ClientForm(tk.Toplevel):
     def _date_field(
         self, parent, row: int, label: str, key: str, help_text: str = ""
     ) -> None:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
+        ttk.Label(parent, text=label, style="FormLabel.TLabel").grid(row=row, column=0, sticky="ew", pady=3)
         variable = self.vars.setdefault(key, tk.StringVar())
         DateEntry(parent, variable).grid(
             row=row, column=1, sticky="ew", padx=(12, 0), pady=5
@@ -471,25 +480,31 @@ class ClientForm(tk.Toplevel):
             ).grid(row=row, column=2, sticky="w", padx=(12, 0), pady=5)
 
     def _build_general(self, frame) -> None:
-        self._field(frame, 0, "Nombre o razón social *", "nombre")
-        self._field(frame, 1, "CUIT/CUIL *", "cuit")
-        self._field(frame, 2, "DNI", "dni")
-        self._date_field(frame, 3, "Fecha de nacimiento", "fecha_nacimiento")
-        self._field(frame, 4, "Nacionalidad", "nacionalidad")
-        self._field(frame, 5, "Estado civil", "estado_civil")
-        self._combo(
-            frame, 6, "Tipo de persona", "tipo_persona", ("persona_humana", "sociedad")
-        )
-        self._field(frame, 7, "Teléfono", "telefono")
-        self._field(frame, 8, "Email", "email")
-        self._field(frame, 9, "Instagram / IG", "instagram")
-        self._field(frame, 10, "Domicilio", "domicilio")
-        self._field(frame, 11, "Rubro", "rubro")
-        self._date_field(frame, 12, "Alta en el estudio", "fecha_alta_estudio")
-        self._combo(frame, 13, "Estado", "estado", ("activo", "inactivo"))
-        self._field(frame, 14, "Observaciones", "observaciones")
-        self.vars["tipo_persona"].set("persona_humana")
-        self.vars["estado"].set("activo")
+        self._date_field(frame, 0, "Fecha de alta en el estudio", "fecha_alta_estudio")
+        self._field(frame, 1, "Legajo", "legajo", help_text="Se genera automáticamente desde EA-0010 y puede editarse.")
+        self._field(frame, 2, "Cliente *", "nombre")
+        self._field(frame, 3, "CUIT *", "cuit")
+        self._field(frame, 4, "DNI", "dni")
+        self._date_field(frame, 5, "Fecha de nacimiento", "fecha_nacimiento")
+        self._combo(frame, 6, "Nacionalidad", "nacionalidad", ("Argentina", "Uruguaya", "Paraguaya", "Boliviana", "Chilena", "Brasileña", "Peruana", "Colombiana", "Venezolana", "Otra"))
+        self._combo(frame, 7, "Estado civil", "estado_civil", ("Soltero/a", "Casado/a", "Divorciado/a", "Viudo/a", "Unión convivencial", "Separado/a", "Otro", "No informado"))
+        self._combo(frame, 8, "Tipo de persona", "tipo_persona", ("Persona humana", "Persona jurídica", "Sucesión indivisa", "Otro"))
+        self._field(frame, 9, "Instagram", "instagram")
+        self._field(frame, 10, "Teléfono", "telefono")
+        self._field(frame, 11, "Mail", "email")
+        self._field(frame, 12, "Domicilio", "domicilio")
+        code = self._field(frame, 13, "Código de actividad", "codigo_actividad")
+        code.configure(validate="key", validatecommand=(self.register(lambda value: not value or value.isdigit()), "%P"))
+        self._combo(frame, 14, "Actividad", "actividad", ("Venta de bienes", "Servicios", "Venta de bienes y servicios", "Exportación de servicios", "Alquileres", "Profesión independiente", "Comercio", "Industria", "Agro", "Otro"))
+        self._combo(frame, 15, "Estado", "estado", ("Activo", "En alta", "En regularización", "Pausado", "Baja", "Ex cliente", "Solo consulta", "Pendiente de documentación", "A revisar"))
+        self._combo(frame, 16, "Rubro", "rubro", ("Comercio", "Servicios profesionales", "Educación", "Salud", "Gastronomía", "Tecnología", "Construcción", "Indumentaria", "Estética", "Transporte", "Inmobiliario", "Marketplace", "Otro"))
+        self._field(frame, 17, "Observaciones", "observaciones")
+        self.vars["tipo_persona"].set("Persona humana")
+        self.vars["estado"].set("Activo")
+        self.vars["nacionalidad"].set("Argentina")
+        self.vars["estado_civil"].set("No informado")
+        self.vars["actividad"].set("Servicios")
+        self.vars["rubro"].set("Servicios profesionales")
 
     def _build_fiscal(self, frame) -> None:
         self._combo(frame, 0, "Régimen principal", "regimen", self.REGIMES)
@@ -555,6 +570,31 @@ class ClientForm(tk.Toplevel):
         self._field(frame, 12, "Cantidad de adherentes de obra social", "mono_adherentes")
         self._combo(frame, 13, "Condición especial", "mono_condicion_especial", ("Sin condición especial", "Jubilado", "Relación de dependencia", "Locador de inmuebles", "Menor de 18 años", "Trabajador independiente promovido", "Registro de efectores", "Actividad primaria exceptuada", "Otro", "A revisar"))
         self.vars["mono_tipo_actividad"].set("Servicios");self.vars["mono_aporta_sipa"].set("Sí");self.vars["mono_aporta_obra_social"].set("Sí");self.vars["mono_adherentes"].set("0");self.vars["mono_condicion_especial"].set("Sin condición especial")
+
+    def _build_responsible(self, frame) -> None:
+        self.ri_multi_widgets: dict[str, tk.Listbox] = {}
+        for group_index, (title, fields) in enumerate(self.app.responsible_service.PROFILE_SECTIONS):
+            box = ttk.LabelFrame(frame, text=title, padding=10)
+            box.grid(row=group_index, column=0, sticky="ew", pady=(0, 10))
+            box.columnconfigure(1, weight=1, minsize=360)
+            for row, (key, label, kind) in enumerate(fields):
+                variable = self.vars.setdefault(key, tk.StringVar())
+                ttk.Label(box, text=label, style="FormLabel.TLabel").grid(row=row, column=0, sticky="ew", padx=(0, 8), pady=3)
+                if kind == "date":
+                    widget = DateEntry(box, variable)
+                elif isinstance(kind, tuple) and kind and kind[0] == "multi":
+                    widget = tk.Listbox(box, selectmode="multiple", exportselection=False, height=min(6, len(kind) - 1), bg="#FBFAF7", relief="solid", borderwidth=1)
+                    for option in kind[1:]:
+                        widget.insert("end", option)
+                    self.ri_multi_widgets[key] = widget
+                elif isinstance(kind, tuple):
+                    widget = ttk.Combobox(box, textvariable=variable, values=kind, state="readonly", style="FormValue.TCombobox")
+                    if kind:
+                        variable.set(kind[0])
+                else:
+                    widget = ttk.Entry(box, textvariable=variable, style="FormValue.TEntry")
+                widget.grid(row=row, column=1, sticky="ew", pady=3)
+        frame.columnconfigure(0, weight=1, minsize=850)
 
     def _build_iibb(self, frame) -> None:
         ttk.Label(
@@ -664,9 +704,10 @@ class ClientForm(tk.Toplevel):
         iibb = self.app.iibb_service.get_profile(self.client_id)
         alerts = self.app.config_service.get_client_alerts(self.client_id)
         mapping = {
+            "legajo": client.get("legajo", ""),
             "nombre": client.get("nombre_razon_social", ""),
             "cuit": client.get("cuit_cuil", ""),
-            "tipo_persona": client.get("tipo_persona", "persona_humana"),
+            "tipo_persona": client.get("tipo_persona_detalle") or str(client.get("tipo_persona", "persona_humana")).replace("_", " ").title(),
             "dni": client.get("dni", ""),
             "fecha_nacimiento": display_date(client.get("fecha_nacimiento", "") or ""),
             "nacionalidad": client.get("nacionalidad", ""),
@@ -675,9 +716,11 @@ class ClientForm(tk.Toplevel):
             "email": client.get("email", ""),
             "instagram": client.get("instagram", ""),
             "domicilio": client.get("domicilio", ""),
+            "codigo_actividad": client.get("codigo_actividad", ""),
+            "actividad": client.get("actividad", ""),
             "rubro": client.get("rubro", client.get("actividad", "")),
             "fecha_alta_estudio": display_date(client.get("fecha_alta_estudio", "") or ""),
-            "estado": client.get("estado", "activo"),
+            "estado": client.get("estado_detalle") or str(client.get("estado", "activo")).title(),
             "observaciones": client.get("observaciones", ""),
             "regimen": fiscal.get("regimen_principal", "sin_definir"),
             "condicion_iva": fiscal.get("condicion_iva", ""),
@@ -712,6 +755,22 @@ class ClientForm(tk.Toplevel):
         }
         for key, value in mapping.items():
             self.vars[key].set(value)
+        responsible = self.app.responsible_service.profile(self.client_id)
+        for _title, fields in self.app.responsible_service.PROFILE_SECTIONS:
+            for key, _label, kind in fields:
+                value = responsible.get(key, "")
+                if key in self.ri_multi_widgets:
+                    selected = {part.strip() for part in value.split(",")}
+                    widget = self.ri_multi_widgets[key]
+                    for index in range(widget.size()):
+                        if widget.get(index) in selected:
+                            widget.selection_set(index)
+                elif kind == "date":
+                    self.vars[key].set(display_date(value))
+                elif kind == "period":
+                    self.vars[key].set(display_period(value))
+                elif value:
+                    self.vars[key].set(value)
         self._refresh_iibb_jurisdictions()
 
     def save(self) -> None:
@@ -734,9 +793,10 @@ class ClientForm(tk.Toplevel):
                 mono_end = normalize_date(mono_end)
             client = Client(
                 id=self.client_id,
+                legajo=self.vars["legajo"].get(),
                 nombre_razon_social=self.vars["nombre"].get(),
                 cuit_cuil=self.vars["cuit"].get(),
-                tipo_persona=self.vars["tipo_persona"].get(),
+                tipo_persona_detalle=self.vars["tipo_persona"].get(),
                 dni=self.vars["dni"].get(),
                 fecha_nacimiento=birth_date,
                 nacionalidad=self.vars["nacionalidad"].get(),
@@ -745,9 +805,11 @@ class ClientForm(tk.Toplevel):
                 email=self.vars["email"].get(),
                 instagram=self.vars["instagram"].get(),
                 domicilio=self.vars["domicilio"].get(),
+                codigo_actividad=self.vars["codigo_actividad"].get(),
+                actividad=self.vars["actividad"].get(),
                 rubro=self.vars["rubro"].get(),
                 fecha_alta_estudio=study_date,
-                estado=self.vars["estado"].get(),
+                estado_detalle=self.vars["estado"].get(),
                 observaciones=self.vars["observaciones"].get(),
             )
             fiscal = FiscalProfile(
@@ -772,6 +834,24 @@ class ClientForm(tk.Toplevel):
                 condicion_especial=self.vars["mono_condicion_especial"].get(),
             )
             client_id = self.app.client_service.save(client, fiscal, mono)
+            responsible_values = {}
+            for _title, fields in self.app.responsible_service.PROFILE_SECTIONS:
+                for key, label, kind in fields:
+                    if key in self.ri_multi_widgets:
+                        widget = self.ri_multi_widgets[key]
+                        value = ", ".join(widget.get(index) for index in widget.curselection())
+                    else:
+                        value = self.vars[key].get().strip()
+                    if kind == "date" and value:
+                        value = normalize_date(value)
+                    elif kind == "period" and value:
+                        value = normalize_period(value)
+                    elif kind == "year" and value and (not value.isdigit() or len(value) != 4):
+                        raise ValueError(f"{label} debe tener formato AAAA.")
+                    elif kind == "digits" and value and not value.isdigit():
+                        raise ValueError(f"{label} debe contener solamente números.")
+                    responsible_values[key] = value
+            self.app.responsible_service.save_profile(client_id, responsible_values)
             iibb_start = self.vars["iibb_fecha_alta"].get().strip()
             iibb_end = self.vars["iibb_fecha_baja"].get().strip()
             self.app.iibb_service.save_profile(client_id, {

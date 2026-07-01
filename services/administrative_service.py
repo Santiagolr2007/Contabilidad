@@ -88,6 +88,7 @@ class AdministrativeService:
                 })
             elif row["seccion"] == "pagos":
                 base.update({
+                    "numero_presupuesto": data.get("numero_presupuesto", "Sin presupuesto asociado"),
                     "tipo_registro": "Honorario", "servicio": data.get("concepto", row.get("descripcion", "")), "periodo": data.get("periodo", row.get("periodo", "")),
                     "importe": float(data.get("importe_facturado") or row.get("importe") or 0), "importe_pagado": float(data.get("importe_cobrado") or 0),
                     "saldo_pendiente": float(data.get("saldo_pendiente") or row.get("saldo") or 0), "estado": data.get("estado_pago", row.get("estado", "")),
@@ -98,6 +99,7 @@ class AdministrativeService:
                 })
             else:
                 base.update({
+                    "numero_presupuesto": data.get("numero_presupuesto", row.get("numero_presupuesto", "")),
                     "tipo_registro": "Presupuesto", "servicio": data.get("concepto", data.get("tipo_servicio", row.get("descripcion", ""))),
                     "periodo": data.get("periodo", row.get("periodo", "")), "importe": float(data.get("valor_presupuestado") or row.get("importe") or 0),
                     "importe_pagado": 0.0, "saldo_pendiente": float(data.get("valor_presupuestado") or row.get("saldo") or 0),
@@ -175,20 +177,22 @@ class AdministrativeService:
                 required(data["tipo_documento"], "Documento"), data["estado"],
                 data.get("fecha_solicitud") or None,
                 data.get("fecha_recepcion") or None,
+                data.get("obligatorio", "Según caso"),
+                data.get("archivo_link", ""),
                 data.get("observaciones", ""),
             )
             if record_id:
                 self.database.execute(
                     """UPDATE documentacion SET cliente_id=?, periodo=?,
                        tipo_documento=?, estado=?, fecha_solicitud=?,
-                       fecha_recepcion=?, observaciones=? WHERE id=?""",
+                       fecha_recepcion=?, obligatorio=?, archivo_link=?, observaciones=? WHERE id=?""",
                     (*values, record_id),
                 )
                 return record_id
             return self.database.execute(
                 """INSERT INTO documentacion(cliente_id, periodo, tipo_documento,
-                   estado, fecha_solicitud, fecha_recepcion, observaciones)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   estado, fecha_solicitud, fecha_recepcion, obligatorio, archivo_link, observaciones)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 values,
             )
 
@@ -291,6 +295,17 @@ class AdministrativeService:
         )
         if duplicate:
             raise ValueError("Ya existe un honorario similar para este cliente.")
+        budget_number = str(data.get("numero_presupuesto") or "").strip()
+        if not budget_number:
+            budget_number = "Sin presupuesto asociado"
+        if budget_number.casefold() != "sin presupuesto asociado":
+            linked = self.database.query_one(
+                """SELECT id FROM cliente_legajo_registros WHERE cliente_id=?
+                   AND seccion='servicio_presupuesto' AND numero_presupuesto=?""",
+                (data["cliente_id"], budget_number),
+            )
+            if not linked:
+                raise ValueError("El presupuesto seleccionado no pertenece al cliente.")
         values = (
             data["cliente_id"], required(data["servicio"], "Servicio"),
             period, amount, data["estado"],
@@ -299,6 +314,7 @@ class AdministrativeService:
             data.get("tipo_registro") or "Honorario",data.get("fecha_vencimiento") or None,
             paid,data.get("numero_comprobante", ""), data.get("comprobante_emitido", ""),
             data.get("tipo_comprobante", ""), data.get("condiciones_presupuesto", ""),
+            budget_number,
         )
         if record_id:
             self.database.execute(
@@ -306,7 +322,7 @@ class AdministrativeService:
                    estado=?, fecha_emision=?, fecha_cobro=?, medio_pago=?,
                        saldo_pendiente=?, observaciones=?,tipo_registro=?,fecha_vencimiento=?,
                        importe_pagado=?,numero_comprobante=?,comprobante_emitido=?,
-                       tipo_comprobante=?,condiciones_presupuesto=?,actualizado_en=CURRENT_TIMESTAMP WHERE id=?""",
+                       tipo_comprobante=?,condiciones_presupuesto=?,numero_presupuesto=?,actualizado_en=CURRENT_TIMESTAMP WHERE id=?""",
                 (*values, record_id),
             )
             return record_id
@@ -314,8 +330,8 @@ class AdministrativeService:
             """INSERT INTO honorarios(cliente_id, servicio, periodo, importe, estado,
                fecha_emision, fecha_cobro, medio_pago, saldo_pendiente, observaciones,
                tipo_registro,fecha_vencimiento,importe_pagado,numero_comprobante,
-               comprobante_emitido,tipo_comprobante,condiciones_presupuesto)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               comprobante_emitido,tipo_comprobante,condiciones_presupuesto,numero_presupuesto)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             values,
         )
 
@@ -401,6 +417,12 @@ class AdministrativeService:
                 """UPDATE honorarios SET estado=?,importe_pagado=?,saldo_pendiente=?,
                    fecha_cobro=?,actualizado_en=CURRENT_TIMESTAMP WHERE id=?""",
                 (status, paid, balance, when if status in ("Cobrado", "Cobro parcial") else None, record_id),
+            )
+            return
+        if module == "documentacion":
+            self.database.execute(
+                "UPDATE documentacion SET estado=?,fecha_recepcion=? WHERE id=?",
+                (status, when if status.casefold() in ("recibido", "recibida") else None, record_id),
             )
             return
         self.database.execute(

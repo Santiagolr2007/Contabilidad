@@ -93,14 +93,15 @@ def main() -> None:
                     )
                     ledger.update_idletasks()
                     tab_names = [str(button.cget("text")) for button in ledger.notebook.buttons]
-                    assert len(tab_names) == 14
+                    assert len(tab_names) == 16
+                    assert tab_names.index("Responsable Inscripto") == tab_names.index("Monotributo") + 1
                     for removed in (
                         "Valores Mensuales", "Contactos ARCA", "Domicilios ARCA",
                         "Datos Migratorios", "Societario Libros", "Historial",
                     ):
                         assert removed not in tab_names
                     ledger.destroy()
-                    print("OK: legajo integral simplificado con 14 solapas", flush=True)
+                    print("OK: legajo integral con 16 solapas y perfiles fiscales", flush=True)
             elif route in ("tareas", "vencimientos", "honorarios"):
                 dialog = RecordDialog(
                     application.current_view,

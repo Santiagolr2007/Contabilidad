@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 
 from database import Database
 from models import Client, FiscalProfile, MonotributoProfile
@@ -18,10 +19,10 @@ class ClientService:
         params: list[str] = []
         if search.strip():
             conditions.append(
-                "(c.nombre_razon_social LIKE ? OR c.cuit_cuil LIKE ? OR c.rubro LIKE ?)"
+                "(c.nombre_razon_social LIKE ? OR c.cuit_cuil LIKE ? OR c.legajo LIKE ? OR c.rubro LIKE ?)"
             )
             term = f"%{search.strip()}%"
-            params.extend((term, term, term))
+            params.extend((term, term, term, term))
         if not include_inactive:
             conditions.append("c.estado = 'activo'")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -65,8 +66,25 @@ class ClientService:
         )
         client.cuit_cuil = validate_cuit(client.cuit_cuil)
         client.email = validate_email(client.email)
-        if client.tipo_persona not in ("persona_humana", "sociedad"):
+        detail_type = (client.tipo_persona_detalle or client.tipo_persona or "Persona humana").strip()
+        type_map = {
+            "persona humana": "persona_humana", "persona jurídica": "sociedad",
+            "sociedad": "sociedad", "sucesión indivisa": "persona_humana",
+            "otro": "persona_humana", "persona_humana": "persona_humana",
+        }
+        technical_type = type_map.get(detail_type.casefold())
+        if technical_type is None:
             raise ValueError("El tipo de persona seleccionado no es válido.")
+        client.tipo_persona = technical_type
+        client.tipo_persona_detalle = detail_type.replace("_", " ").title() if "_" in detail_type else detail_type
+        client.estado_detalle = (client.estado_detalle or client.estado or "Activo").strip().capitalize()
+        client.estado = "inactivo" if client.estado_detalle.casefold() in ("baja", "ex cliente", "inactivo") else "activo"
+        client.codigo_actividad = client.codigo_actividad.strip()
+        if client.codigo_actividad and not client.codigo_actividad.isdigit():
+            raise ValueError("El código de actividad debe contener solamente números.")
+        client.legajo = client.legajo.strip().upper()
+        if client.legajo and not re.fullmatch(r"EA-\d{4,}", client.legajo):
+            raise ValueError("El legajo debe tener el formato EA-0010.")
 
         if (
             monotributo
@@ -77,21 +95,33 @@ class ClientService:
 
         try:
             with self.database.connection() as connection:
+                if not client.legajo:
+                    used = {
+                        int(match.group(1))
+                        for row in connection.execute("SELECT legajo FROM clientes")
+                        if (match := re.fullmatch(r"EA-(\d+)", str(row[0] or "").upper()))
+                    }
+                    number = 10
+                    while number in used:
+                        number += 1
+                    client.legajo = f"EA-{number:04d}"
                 if client.id:
                     connection.execute(
                         """
                         UPDATE clientes SET
-                            nombre_razon_social = ?, cuit_cuil = ?, tipo_persona = ?,
+                            nombre_razon_social = ?, cuit_cuil = ?, legajo = ?, tipo_persona = ?, tipo_persona_detalle = ?,
                             dni = ?, fecha_nacimiento = ?, nacionalidad = ?, estado_civil = ?,
                             telefono = ?, email = ?, instagram = ?, domicilio = ?,
-                            rubro = ?, actividad = ?, fecha_alta_estudio = ?,
-                            estado = ?, observaciones = ?, actualizado_en = CURRENT_TIMESTAMP
+                            codigo_actividad = ?, actividad = ?, rubro = ?, fecha_alta_estudio = ?,
+                            estado = ?, estado_detalle = ?, observaciones = ?, actualizado_en = CURRENT_TIMESTAMP
                         WHERE id = ?
                         """,
                         (
                             client.nombre_razon_social,
                             client.cuit_cuil,
+                            client.legajo,
                             client.tipo_persona,
+                            client.tipo_persona_detalle,
                             client.dni.strip(),
                             client.fecha_nacimiento or None,
                             client.nacionalidad.strip(),
@@ -100,10 +130,12 @@ class ClientService:
                             client.email,
                             client.instagram.strip(),
                             client.domicilio.strip(),
-                            client.rubro.strip(),
+                            client.codigo_actividad,
+                            client.actividad.strip(),
                             client.rubro.strip(),
                             client.fecha_alta_estudio or None,
                             client.estado,
+                            client.estado_detalle,
                             client.observaciones.strip(),
                             client.id,
                         ),
@@ -113,16 +145,18 @@ class ClientService:
                     cursor = connection.execute(
                         """
                         INSERT INTO clientes(
-                            nombre_razon_social, cuit_cuil, tipo_persona, dni,
+                            nombre_razon_social, cuit_cuil, legajo, tipo_persona, tipo_persona_detalle, dni,
                             fecha_nacimiento, nacionalidad, estado_civil, telefono,
-                            email, instagram, domicilio, rubro, actividad,
-                            fecha_alta_estudio, estado, observaciones
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            email, instagram, domicilio, codigo_actividad, actividad, rubro,
+                            fecha_alta_estudio, estado, estado_detalle, observaciones
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             client.nombre_razon_social,
                             client.cuit_cuil,
+                            client.legajo,
                             client.tipo_persona,
+                            client.tipo_persona_detalle,
                             client.dni.strip(),
                             client.fecha_nacimiento or None,
                             client.nacionalidad.strip(),
@@ -131,10 +165,12 @@ class ClientService:
                             client.email,
                             client.instagram.strip(),
                             client.domicilio.strip(),
-                            client.rubro.strip(),
+                            client.codigo_actividad,
+                            client.actividad.strip(),
                             client.rubro.strip(),
                             client.fecha_alta_estudio or None,
                             client.estado,
+                            client.estado_detalle,
                             client.observaciones.strip(),
                         ),
                     )
@@ -244,6 +280,8 @@ class ClientService:
         except sqlite3.IntegrityError as error:
             if "cuit_cuil" in str(error):
                 raise ValueError("Ya existe un cliente con ese CUIT/CUIL.") from error
+            if "legajo" in str(error):
+                raise ValueError("Ya existe otro cliente con ese número de legajo.") from error
             raise ValueError("No se pudo guardar el cliente por datos duplicados.") from error
 
     def deactivate(self, client_id: int) -> None:

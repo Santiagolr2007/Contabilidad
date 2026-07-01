@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import tkinter as tk
-import os
 from datetime import date, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -10,19 +9,22 @@ from models import Client, FiscalProfile
 from utils.formatters import display_date, display_period, money, normalize_date
 
 from .common import ScrollableFrame, fit_window, make_tree_sortable, selected_tree_id
-from .date_widgets import DateEntry
+from .date_widgets import DateEntry, ask_date
 from .ledger_view import ClientLedgerDialog
+from services.ledger_service import DOCUMENT_OPTIONS
 
 
 DEFINITIONS = {
     "documentacion": (
-        "Documentación y tareas",
+        "Documentación y Accesos",
         (
             ("periodo", "Período", "text"),
-            ("tipo_documento", "Documento", "text"),
-            ("estado", "Estado", ("Solicitada", "Recibida", "Incompleta", "Observada", "Aprobada")),
+            ("tipo_documento", "Documento", DOCUMENT_OPTIONS),
+            ("estado", "Estado", ("Solicitado", "Recibido", "Pendiente", "Incompleto", "Vencido", "No corresponde", "Requiere actualización")),
             ("fecha_solicitud", "Fecha solicitud", "date"),
             ("fecha_recepcion", "Fecha recepción", "date"),
+            ("obligatorio", "Obligatorio", ("Sí", "No", "Según caso", "No corresponde")),
+            ("archivo_link", "Link o archivo", "text"),
             ("observaciones", "Observaciones", "text"),
         ),
     ),
@@ -64,13 +66,14 @@ DEFINITIONS = {
     "honorarios": (
         "Honorarios - pagos al estudio",
         (
+            ("numero_presupuesto", "Número de presupuesto", "budget"),
             ("tipo_registro", "Tipo de registro", ("Honorario", "Presupuesto", "Pago", "Abono mensual", "Trabajo extraordinario")),
             ("servicio", "Concepto / servicio", ("Alta inicial", "Abono mensual", "Liquidación mensual", "Presentación anual", "Regularización fiscal", "Regularización impositiva", "Fiscalización", "Moratoria / plan de pago", "Alta ARCA", "Alta IIBB", "Alta municipal", "Alta empleador", "Sueldos", "Casas particulares", "Societario", "Certificación", "Informe", "Consulta", "Otro")),
             ("periodo", "Período MM/AAAA", "text"),
             ("importe", "Importe presupuestado / facturado", "text"),
             ("importe_pagado", "Importe cobrado", "text"),
             ("saldo_pendiente", "Saldo pendiente", "text"),
-            ("estado", "Estado de cobro", ("Pendiente", "Cobrado", "Cobro parcial", "Vencido", "Bonificado", "Anulado", "No corresponde")),
+            ("estado", "Estado de cobro", ("Pendiente", "Cobrado", "Cobro parcial", "Vencido", "Bonificado", "Anulado", "Sin presupuesto asociado", "No corresponde")),
             ("fecha_emision", "Fecha emisión", "date"),
             ("fecha_vencimiento", "Fecha vencimiento", "date"),
             ("fecha_cobro", "Fecha cobro", "date"),
@@ -103,29 +106,29 @@ class AdministrativeView(ttk.Frame):
                 text="Ver tareas",
                 command=lambda: app.show_view("tareas"),
             ).pack(side="left", padx=8)
-        if module in ("tareas", "vencimientos", "honorarios"):
+        if module in ("documentacion", "tareas", "vencimientos", "honorarios"):
             ttk.Button(toolbar, text="Modificar", command=self.edit).pack(
                 side="left", padx=(8, 0)
             )
             ttk.Button(toolbar, text="Eliminar", command=self.delete).pack(
                 side="left", padx=(8, 0)
             )
-        if module in ("tareas", "vencimientos", "honorarios"):
+        if module in ("documentacion", "tareas", "vencimientos", "honorarios"):
             ttk.Button(toolbar, text="Exportar Excel", command=lambda: self.export("xlsx")).pack(side="left", padx=(8,0))
             ttk.Button(toolbar, text="Exportar PDF", command=lambda: self.export("pdf")).pack(side="left", padx=(5,0))
-            ttk.Button(toolbar, text="Imprimir", command=lambda: self.export("pdf", True)).pack(side="left", padx=(5,0))
             ttk.Button(toolbar, text="Abrir legajo", command=self.open_ledger).pack(side="left", padx=(8,0))
         if module == "vencimientos":
             ttk.Button(toolbar, text="Importar vencimientos ARCA", command=self.import_arca).pack(side="left", padx=(8, 0))
         ttk.Button(toolbar, text="Actualizar", command=self.refresh).pack(side="right")
 
-        if module in ("tareas", "vencimientos", "honorarios"):
+        if module in ("documentacion", "tareas", "vencimientos", "honorarios"):
             status_bar = ttk.LabelFrame(self, text="Acciones sobre el registro seleccionado", padding=6)
             status_bar.pack(fill="x", pady=(0, 8))
             actions = {
                 "tareas": ("Cumplimentada", "Pendiente", "En proceso", "Vencida", "Cancelada", "No corresponde"),
                 "vencimientos": ("Cumplido", "Pagado", "Pendiente", "Vencido", "No corresponde"),
                 "honorarios": ("Cobrado", "Cobro parcial", "Pendiente", "Vencido", "Bonificado", "Anulado", "No corresponde"),
+                "documentacion": ("Recibido", "Pendiente", "Incompleto", "Vencido", "No corresponde", "Requiere actualización"),
             }[module]
             for status in actions:
                 label = {
@@ -134,12 +137,14 @@ class AdministrativeView(ttk.Frame):
                     "Pagado": "Marcar pagado",
                     "Cobrado": "Marcar como cobrado",
                     "Cobro parcial": "Marcar cobro parcial",
+                    "Recibido": "Marcar como recibido",
                 }.get(status, status)
                 ttk.Button(status_bar, text=label, command=lambda value=status: self.change_status(value)).pack(side="left", padx=3)
 
         self.filter_state = tk.StringVar(value="Todos")
         self.filter_client = tk.StringVar(value="Todos")
         self.filter_period = tk.StringVar()
+        self.filter_budget = tk.StringVar()
         self.filter_type = tk.StringVar(value="Todos")
         self.filter_organism = tk.StringVar(value="Todos")
         self.filter_text = tk.StringVar()
@@ -153,7 +158,7 @@ class AdministrativeView(ttk.Frame):
             f"{row['nombre_razon_social']} · {row['cuit_cuil']}": int(row["id"])
             for row in clients
         }}
-        if module in ("tareas", "vencimientos", "honorarios"):
+        if module in ("documentacion", "tareas", "vencimientos", "honorarios"):
             filters = ttk.Frame(self)
             filters.pack(fill="x", pady=(0, 8))
             ttk.Label(filters, text="Cliente").grid(row=0,column=0,sticky="w")
@@ -162,7 +167,8 @@ class AdministrativeView(ttk.Frame):
             states = {
                 "tareas": ("Todos", "Pendiente", "En proceso", "Esperando cliente", "Esperando organismo", "Cumplimentada", "Vencida", "Cancelada", "No corresponde", "Vencidas por fecha"),
                 "vencimientos": ("Todos", "Pendiente", "Cumplido", "Pagado", "Vencido", "No corresponde", "Próximos 30 días", "Vencidos por fecha"),
-                "honorarios": ("Todos", "Pendiente", "Cobrado", "Cobro parcial", "Vencido", "Bonificado", "Anulado", "No corresponde"),
+                "honorarios": ("Todos", "Pendiente", "Cobrado", "Cobro parcial", "Vencido", "Bonificado", "Anulado", "Sin presupuesto asociado", "No corresponde"),
+                "documentacion": ("Todos", "Recibido", "Pendiente", "Incompleto", "Vencido", "Obligatorios", "No corresponde", "Requiere actualización"),
             }[module]
             ttk.Combobox(filters, textvariable=self.filter_state, values=states, state="readonly", width=18).grid(row=0,column=3,sticky="ew",padx=(5,10))
             ttk.Label(filters, text="Período").grid(row=0,column=4,sticky="w")
@@ -171,11 +177,14 @@ class AdministrativeView(ttk.Frame):
             DateEntry(filters, self.filter_date_from).grid(row=1,column=1,sticky="ew",padx=(5,10),pady=(4,0))
             ttk.Label(filters, text="Hasta").grid(row=1,column=2,sticky="w",pady=(4,0))
             DateEntry(filters, self.filter_date_to).grid(row=1,column=3,sticky="ew",padx=(5,10),pady=(4,0))
-            ttk.Label(filters, text={"tareas":"Área", "vencimientos":"Impuesto / trámite", "honorarios":"Concepto"}[module]).grid(row=1,column=4,sticky="w",pady=(4,0))
+            ttk.Label(filters, text={"tareas":"Área", "vencimientos":"Impuesto / trámite", "honorarios":"Concepto", "documentacion":"Documento"}[module]).grid(row=1,column=4,sticky="w",pady=(4,0))
             ttk.Entry(filters, textvariable=self.filter_text).grid(row=1,column=5,sticky="ew",padx=(5,10),pady=(4,0))
             if module == "vencimientos":
                 ttk.Label(filters, text="Organismo").grid(row=2,column=0,sticky="w",pady=(4,0))
                 ttk.Combobox(filters, textvariable=self.filter_organism, values=("Todos", "ARCA", "ARBA", "AGIP", "COMARB", "Municipio", "IGJ", "DPPJ", "Ministerio de Trabajo", "Banco", "Estudio", "Otro"), state="readonly").grid(row=2,column=1,sticky="ew",padx=(5,10),pady=(4,0))
+            if module == "honorarios":
+                ttk.Label(filters, text="Presupuesto").grid(row=2,column=0,sticky="w",pady=(4,0))
+                ttk.Entry(filters, textvariable=self.filter_budget).grid(row=2,column=1,sticky="ew",padx=(5,10),pady=(4,0))
             if module == "tareas":
                 ttk.Label(filters, text="Prioridad").grid(row=2,column=0,sticky="w",pady=(4,0))
                 ttk.Combobox(filters, textvariable=self.filter_priority, values=("Todos", "Baja", "Media", "Alta", "Urgente"), state="readonly").grid(row=2,column=1,sticky="ew",padx=(5,10),pady=(4,0))
@@ -217,7 +226,7 @@ class AdministrativeView(ttk.Frame):
             gy.grid(row=0, column=1, sticky="ns"); gx.grid(row=1, column=0, sticky="ew")
             grouped.rowconfigure(0, weight=1); grouped.columnconfigure(0, weight=1)
             self.group_tree.bind("<Double-1>", lambda _event: self.edit())
-        if module in ("tareas", "vencimientos", "honorarios"):
+        if module in ("documentacion", "tareas", "vencimientos", "honorarios"):
             self.tree.bind("<Double-1>", lambda _event: self.edit())
             make_tree_sortable(self.tree, {"importe", "importe_pagado", "saldo_pendiente"})
         self.refresh()
@@ -241,14 +250,16 @@ class AdministrativeView(ttk.Frame):
 
     def refresh(self) -> None:
         rows = self.app.administrative_service.list(self.module)
-        if self.module in ("tareas", "vencimientos", "honorarios"):
+        if self.module in ("documentacion", "tareas", "vencimientos", "honorarios"):
             selected_client = self.filter_client_map.get(self.filter_client.get())
             period = self.filter_period.get().strip().replace("/", "-")
             if len(period) == 7 and period[2] == "-":
                 period = f"{period[3:]}-{period[:2]}"
             rows = [row for row in rows if (selected_client is None or row.get("cliente_id") == selected_client)]
             selected_state = self.filter_state.get()
-            if selected_state == "Próximos 30 días":
+            if selected_state == "Obligatorios":
+                rows = [row for row in rows if str(row.get("obligatorio", "")).casefold() == "sí"]
+            elif selected_state == "Próximos 30 días":
                 today = date.today().isoformat(); end = (date.today()+timedelta(days=30)).isoformat()
                 rows = [row for row in rows if str(row.get("estado", "")).casefold() not in ("pagado", "cumplido", "no corresponde") and today <= str(row.get("fecha_vencimiento") or "") <= end]
             elif selected_state in ("Vencidos por fecha", "Vencidas por fecha"):
@@ -258,6 +269,9 @@ class AdministrativeView(ttk.Frame):
             else:
                 rows = [row for row in rows if selected_state == "Todos" or str(row.get("estado", "")).casefold() == selected_state.casefold()]
             rows = [row for row in rows if (not period or row.get("periodo") == period)]
+            if self.module == "honorarios" and self.filter_budget.get().strip():
+                budget_term = self.filter_budget.get().strip().casefold()
+                rows = [row for row in rows if budget_term in str(row.get("numero_presupuesto") or "").casefold()]
             if self.module == "vencimientos" and self.filter_organism.get() != "Todos":
                 rows = [row for row in rows if row.get("organismo") == self.filter_organism.get()]
             if self.module == "tareas" and self.filter_priority.get() != "Todos":
@@ -267,6 +281,7 @@ class AdministrativeView(ttk.Frame):
                 "tareas": ("modulo", "descripcion"),
                 "vencimientos": ("impuesto", "tipo_vencimiento"),
                 "honorarios": ("servicio", "tipo_registro"),
+                "documentacion": ("tipo_documento", "observaciones"),
             }[self.module]
             if term:
                 rows = [row for row in rows if term in " ".join(str(row.get(key, "")) for key in searchable).casefold()]
@@ -284,7 +299,7 @@ class AdministrativeView(ttk.Frame):
             if start and end and start > end:
                 messagebox.showerror("Rango inválido", "La fecha Desde no puede ser posterior a Hasta.", parent=self)
                 return
-            date_key = "fecha_inicio" if self.module == "tareas" else "fecha_vencimiento"
+            date_key = "fecha_inicio" if self.module == "tareas" else ("fecha_solicitud" if self.module == "documentacion" else "fecha_vencimiento")
             if start: rows = [row for row in rows if str(row.get(date_key) or "") >= start]
             if end: rows = [row for row in rows if str(row.get(date_key) or "") <= end]
             if self.module == "tareas":
@@ -294,9 +309,11 @@ class AdministrativeView(ttk.Frame):
         if self.module == "vencimientos":
             visible = ["cliente_nombre", "impuesto", "organismo", "periodo", "fecha_vencimiento", "tipo_vencimiento", "estado", "fecha_cumplimiento", "fecha_pago", "observaciones"]
         elif self.module == "honorarios":
-            visible = ["cliente_nombre", "periodo", "servicio", "importe", "importe_pagado", "saldo_pendiente", "estado", "fecha_vencimiento", "fecha_cobro", "medio_pago", "comprobante_emitido", "tipo_comprobante", "numero_comprobante", "observaciones"]
+            visible = ["cliente_nombre", "numero_presupuesto", "periodo", "servicio", "importe", "importe_pagado", "saldo_pendiente", "estado", "fecha_vencimiento", "fecha_cobro", "medio_pago", "comprobante_emitido", "tipo_comprobante", "numero_comprobante", "observaciones"]
         elif self.module == "tareas":
             visible = ["cliente_nombre", "modulo", "titulo", "descripcion", "fecha_inicio", "fecha_vencimiento", "estado", "prioridad", "medio", "documentacion_vinculada", "proximo_paso", "observaciones", "fecha_cumplimiento"]
+        elif self.module == "documentacion":
+            visible = ["cliente_nombre", "periodo", "tipo_documento", "estado", "fecha_solicitud", "fecha_recepcion", "obligatorio", "archivo_link", "observaciones"]
         else:
             keys = list(rows[0].keys()) if rows else ["id", "cliente_nombre", "estado"]
             visible = [key for key in keys if key not in ("id", "cliente_id", "responsable", "actualizado_en")][:9]
@@ -394,11 +411,8 @@ class AdministrativeView(ttk.Frame):
             return
         effective_date = None
         amount = None
-        if status in ("Cumplimentada", "Cumplido", "Pagado", "Cobrado", "Cobro parcial"):
-            entered = simpledialog.askstring(
-                "Fecha efectiva", "Fecha (DD/MM/AAAA):", parent=self,
-                initialvalue=date.today().strftime("%d/%m/%Y"),
-            )
+        if status in ("Cumplimentada", "Cumplido", "Pagado", "Cobrado", "Cobro parcial", "Recibido"):
+            entered = ask_date(self, "Fecha efectiva", "Seleccioná la fecha:", date.today())
             if entered is None: return
             try: effective_date = normalize_date(entered)
             except ValueError as error:
@@ -415,7 +429,7 @@ class AdministrativeView(ttk.Frame):
         except Exception as error:
             messagebox.showerror("No se pudo actualizar", str(error), parent=self)
 
-    def export(self, format_name: str, print_after: bool = False) -> None:
+    def export(self, format_name: str) -> None:
         extension = f".{format_name}"
         filename = filedialog.asksaveasfilename(parent=self, defaultextension=extension, initialfile=f"{DEFINITIONS[self.module][0]}_{date.today().isoformat()}{extension}", filetypes=((format_name.upper(), f"*{extension}"),))
         if not filename: return
@@ -425,10 +439,7 @@ class AdministrativeView(ttk.Frame):
         hidden = {"id", "cliente_id", "responsable", "actualizado_en", "creado_en"}
         rows = [{key: value for key, value in row.items() if key not in hidden} for row in self.current_rows]
         method(Path(filename), title, rows, filter_text)
-        if print_after:
-            try: os.startfile(filename, "print")
-            except OSError: messagebox.showinfo("PDF listo", f"Abrí e imprimí:\n{filename}", parent=self)
-        else: messagebox.showinfo("Exportación terminada", f"Se creó:\n{filename}", parent=self)
+        messagebox.showinfo("Exportación terminada", f"Se creó:\n{filename}", parent=self)
 
     def add(self) -> None:
         RecordDialog(self, self.app, self.module, self.refresh)
@@ -446,6 +457,7 @@ class AdministrativeView(ttk.Frame):
             messagebox.showinfo("Seleccionar registro", "Seleccioná un registro de la tabla.")
             return
         nouns = {
+            "documentacion": "el documento",
             "tareas": "la tarea",
             "vencimientos": "el vencimiento",
             "honorarios": "el honorario",
@@ -559,21 +571,18 @@ class DeadlineRowDialog(tk.Toplevel):
 class AccountingImportHistoryDialog(tk.Toplevel):
     def __init__(self,parent,app,source:str="") -> None:
         super().__init__(parent);self.app=app;self.source=source;self.title("Historial de importaciones");fit_window(self,1050,560);self.transient(parent.winfo_toplevel());self.grab_set();body=ttk.Frame(self,padding=14);body.pack(fill="both",expand=True)
-        ttk.Label(body,text="Historial de importaciones contables",style="Title.TLabel").pack(anchor="w");actions=ttk.Frame(body);actions.pack(fill="x",pady=7);ttk.Button(actions,text="Exportar Excel",command=lambda:self.export("xlsx")).pack(side="left");ttk.Button(actions,text="Exportar PDF",command=lambda:self.export("pdf")).pack(side="left",padx=5);ttk.Button(actions,text="Imprimir",command=lambda:self.export("pdf",True)).pack(side="left")
+        ttk.Label(body,text="Historial de importaciones contables",style="Title.TLabel").pack(anchor="w");actions=ttk.Frame(body);actions.pack(fill="x",pady=7);ttk.Button(actions,text="Exportar Excel",command=lambda:self.export("xlsx")).pack(side="left");ttk.Button(actions,text="Exportar PDF",command=lambda:self.export("pdf")).pack(side="left",padx=5)
         holder=ttk.Frame(body);holder.pack(fill="both",expand=True);columns=("cliente","fuente","archivo","fecha","leidas","importadas","duplicadas","revisar","error","vigencia","estado","observaciones");self.tree=ttk.Treeview(holder,columns=columns,show="headings")
         for c in columns:self.tree.heading(c,text=c.replace("_"," ").title());self.tree.column(c,width=120 if c not in ("archivo","observaciones") else 210)
         sy=ttk.Scrollbar(holder,orient="vertical",command=self.tree.yview);sx=ttk.Scrollbar(holder,orient="horizontal",command=self.tree.xview);self.tree.configure(yscrollcommand=sy.set,xscrollcommand=sx.set);self.tree.grid(row=0,column=0,sticky="nsew");sy.grid(row=0,column=1,sticky="ns");sx.grid(row=1,column=0,sticky="ew");holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
         self.rows=app.arca_import_service.history(source)
         for row in self.rows:self.tree.insert("","end",values=(row["cliente"],row["fuente"],row["archivo"],display_date(row["fecha_importacion"]),row["filas_leidas"],row["filas_importadas"],row["filas_duplicadas"],row["filas_revisar"],row["filas_error"],display_date(row["vigencia_detectada"]),row["estado"],row["observaciones"]))
-    def export(self,format_name:str,print_after:bool=False):
+    def export(self,format_name:str):
         extension=f".{format_name}";filename=filedialog.asksaveasfilename(parent=self,defaultextension=extension,filetypes=((format_name.upper(),f"*{extension}"),),initialfile=f"Historial {self.source or 'importaciones'}{extension}")
         if not filename:return
         try:
             method=self.app.report_service.export_table_excel if format_name=="xlsx" else self.app.report_service.export_table_pdf;method(Path(filename),"Historial de importaciones",self.rows,self.source or "Todas")
-            if print_after:
-                try:os.startfile(filename,"print")
-                except OSError:messagebox.showinfo("PDF listo",f"Abrí e imprimí:\n{filename}",parent=self)
-            else:messagebox.showinfo("Exportación terminada",f"Se creó:\n{filename}",parent=self)
+            messagebox.showinfo("Exportación terminada",f"Se creó:\n{filename}",parent=self)
         except Exception as error:messagebox.showerror("No se pudo exportar",str(error),parent=self)
 
 
@@ -597,7 +606,7 @@ class RecordDialog(tk.Toplevel):
             footer, text="Guardar cambios" if record_id else "Guardar",
             style="Primary.TButton", command=self.save,
         ).pack(side="right", padx=8)
-        scroll = ScrollableFrame(self, padding=18)
+        scroll = ScrollableFrame(self, padding=18, horizontal=True)
         scroll.pack(side="top", fill="both", expand=True)
         body = scroll.content
         clients = app.client_service.list_clients(include_inactive=True)
@@ -618,12 +627,18 @@ class RecordDialog(tk.Toplevel):
         )
         self.client_combo.grid(row=0, column=1, sticky="ew", padx=8)
         self.client_combo.bind("<KeyRelease>", self._filter_clients)
+        self.client_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_budget_options())
         if self.clients:
             self.vars["cliente"].set(next(iter(self.clients)))
         for row, (key, label, kind) in enumerate(DEFINITIONS[module][1], 1):
             self.vars[key] = tk.StringVar()
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
-            if kind == "date":
+            if kind == "budget":
+                self.budget_combo = ttk.Combobox(body, textvariable=self.vars[key], values=("Sin presupuesto asociado",), state="readonly")
+                self.budget_combo.grid(row=row, column=1, sticky="ew", padx=8)
+                self.budget_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_budget())
+                self.vars[key].set("Sin presupuesto asociado")
+            elif kind == "date":
                 DateEntry(body, self.vars[key]).grid(
                     row=row, column=1, sticky="ew", padx=8
                 )
@@ -647,8 +662,37 @@ class RecordDialog(tk.Toplevel):
         body.columnconfigure(1, weight=1)
         if "responsable" in self.vars:
             self.vars["responsable"].set("NATALIA")
+        self.budget_map: dict[str, dict] = {}
+        self._update_budget_options()
         if record_id:
             self._load()
+
+    def _update_budget_options(self) -> None:
+        if self.module != "honorarios" or not hasattr(self, "budget_combo"):
+            return
+        client_id = self.clients.get(self.vars["cliente"].get())
+        records = self.app.ledger_service.list_records(int(client_id), "servicio_presupuesto") if client_id else []
+        self.budget_map = {
+            str(row["datos"].get("numero_presupuesto") or row.get("numero_presupuesto") or ""): row["datos"]
+            for row in records
+            if row["datos"].get("numero_presupuesto") or row.get("numero_presupuesto")
+        }
+        self.budget_combo.configure(values=("Sin presupuesto asociado", *self.budget_map.keys()))
+
+    def _apply_budget(self) -> None:
+        budget = self.budget_map.get(self.vars.get("numero_presupuesto", tk.StringVar()).get())
+        if not budget:
+            return
+        mapping = {
+            "servicio": budget.get("descripcion") or budget.get("concepto", ""),
+            "periodo": display_period(str(budget.get("periodo") or "")),
+            "importe": budget.get("valor_presupuestado", ""),
+            "saldo_pendiente": budget.get("saldo_pendiente") or budget.get("valor_presupuestado", ""),
+            "fecha_vencimiento": display_date(str(budget.get("fecha_vencimiento") or "")),
+        }
+        for key, value in mapping.items():
+            if key in self.vars:
+                self.vars[key].set(str(value or ""))
 
     def _filter_clients(self, _event=None) -> None:
         term = self.vars["cliente"].get().casefold()
@@ -667,6 +711,7 @@ class RecordDialog(tk.Toplevel):
             next(iter(self.clients), ""),
         )
         self.vars["cliente"].set(client_label)
+        self._update_budget_options()
         for key, _label, kind in DEFINITIONS[self.module][1]:
             value = record.get(key) or ""
             if key in self.multi_widgets:

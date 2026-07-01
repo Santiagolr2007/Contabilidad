@@ -20,6 +20,7 @@ versiones anteriores.
 ## Funciones implementadas
 
 - Alta, edición, búsqueda y baja lógica de clientes.
+- Legajo interno correlativo y editable (`EA-0010`, `EA-0011`, ...) con control de duplicados.
 - Datos personales completos, fecha de alta en el estudio y regímenes activos.
 - Ficha de monotributo con actividad fiscal, denominación, categoría y fechas.
 - Perfil independiente de Ingresos Brutos y cálculo mensual.
@@ -53,6 +54,16 @@ versiones anteriores.
   accesos, organismos, bancos, riesgos, tareas y vencimientos.
 - Cuenta corriente de honorarios/pagos al estudio con saldo automático, cobro
   total o parcial, totales, filtros, estados coloreados y alertas por deuda.
+- Presupuestos correlativos (`EAP-0010`, `EAP-0011`, ...) y honorarios vinculados
+  al presupuesto seleccionado, con opción explícita sin presupuesto asociado.
+- Perfil manual completo de Responsable Inscripto: IVA, Ganancias, Autónomos,
+  facturación, compras/ventas, retenciones, regímenes informativos y controles.
+- ARCA adapta los campos visibles al régimen del cliente y a sus obligaciones de
+  Monotributo, Responsable Inscripto, Ganancias y Bienes Personales.
+- Relevamiento ampliado y editable con selección múltiple, doble desplazamiento
+  y campos de actividad, operación, clientes, proveedores, estructura y riesgos.
+- Documentación sugerida por categoría, filtros, obligatoriedad, enlace/archivo y
+  acción para marcar recibido eligiendo la fecha desde calendario.
 - Auditoría técnica interna sin mostrar historial, responsables internos ni
   fechas de última modificación al usuario.
 - Exportación parcial o completa a Excel/PDF y exportación masiva a ZIP.
@@ -70,7 +81,7 @@ versiones anteriores.
 - Mercado Libre: ventas, compras, notas de crédito, devoluciones, productos,
   contrapartes, operaciones significativas y neteo mensual.
 - Borrado controlado de importaciones de plataformas y trazabilidad técnica interna.
-- Reportes Mercado Pago y Mercado Libre en Excel, PDF e impresión.
+- Reportes Mercado Pago y Mercado Libre en Excel y PDF.
 - Importación robusta de vencimientos ARCA (`.xls`, `.xlsx` o `.csv`) con detección
   de encabezados, vinculación por CUIT, vista previa, control de duplicados e historial.
 - Alta y edición manual de clientes y de todas las secciones activas del legajo.
@@ -80,10 +91,10 @@ versiones anteriores.
   combinando comprobantes ARCA y operaciones de Mercado Libre.
 - Pantalla individual de Responsables Inscriptos con selector por nombre/CUIT,
   14 solapas en dos filas y tarjetas coloreadas para ventas, compras, IVA,
-  saldo técnico, vencimientos, pagos, documentación, riesgos y alertas.
+  saldo técnico, vencimientos, honorarios, documentación, riesgos y alertas.
 - Consolidación de ARCA, Mercado Libre, Mercado Pago e Ingresos Brutos por
-  responsable, con detalle desplazable y exportación a Excel, PDF e impresión.
-- Reporte General de Tareas exportable a Excel/PDF e imprimible.
+  responsable, con detalle desplazable y exportación a Excel y PDF.
+- Reporte General de Tareas exportable a Excel/PDF.
 - Mercado Pago y Mercado Libre con barras de acciones separadas, menús en dos
   filas, vista previa, confirmación independiente y scroll horizontal/vertical.
 
@@ -99,9 +110,10 @@ usan listas desplegables y muestran sus alternativas en azul. Los datos técnico
 de auditoría se conservan internamente y no se muestran en la interfaz.
 
 El legajo activo contiene Resumen, Datos del Cliente, Servicio/Presupuesto,
-Honorarios/Pagos, Relevamiento, Documentación y Accesos, ARCA manual, IIBB,
-Municipal, Laboral, Bancos, Riesgos, Tareas/Eventos y Vencimientos. La creación
-del cliente y la carga del legajo son exclusivamente manuales.
+Honorarios/Pagos, Monotributo, Responsable Inscripto, Relevamiento,
+Documentación y Accesos, ARCA adaptada al régimen, IIBB, Municipal, Laboral,
+Bancos, Riesgos, Tareas/Eventos y Vencimientos. La creación del cliente y la
+carga del legajo son exclusivamente manuales.
 
 Para una exportación masiva, marque clientes con la casilla de la primera
 columna y pulse **Exportar clientes seleccionados**. Si no marca ninguno, se

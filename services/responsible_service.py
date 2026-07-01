@@ -9,10 +9,13 @@ from database import Database
 from .administrative_service import AdministrativeService
 from .config_service import ConfigService
 from .ledger_service import LedgerService
+from .responsible_profile import RESPONSIBLE_PROFILE_SECTIONS
 
 
 class ResponsibleService:
     """Consultas consolidadas para la ficha individual de Responsable Inscripto."""
+
+    PROFILE_SECTIONS = RESPONSIBLE_PROFILE_SECTIONS
 
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -20,8 +23,9 @@ class ResponsibleService:
 
     def clients(self) -> list[dict]:
         rows = self.database.query(
-            """SELECT DISTINCT c.id,c.nombre_razon_social,c.cuit_cuil,c.estado,
-                      COALESCE(c.actividad,c.rubro,'') actividad,
+            """SELECT DISTINCT c.id,c.legajo,c.nombre_razon_social,c.cuit_cuil,
+                      COALESCE(NULLIF(c.estado_detalle,''),c.estado) estado,
+                      COALESCE(NULLIF(c.actividad,''),c.rubro,'') actividad,
                       COALESCE(d.regimen_principal,'') regimen_principal,
                       COALESCE(d.condicion_iva,'') condicion_iva
                FROM clientes c
@@ -36,6 +40,34 @@ class ResponsibleService:
                ORDER BY c.nombre_razon_social COLLATE NOCASE"""
         )
         return [dict(row) for row in rows]
+
+    def profile(self, client_id: int) -> dict[str, str]:
+        return {
+            str(row["campo"]): str(row["valor"] or "")
+            for row in self.database.query(
+                """SELECT campo,valor FROM cliente_legajo_campos
+                   WHERE cliente_id=? AND seccion='responsable_inscripto'""",
+                (client_id,),
+            )
+        }
+
+    def save_profile(self, client_id: int, values: dict[str, str]) -> None:
+        valid = {
+            key
+            for _title, fields in self.PROFILE_SECTIONS
+            for key, _label, _kind in fields
+        }
+        with self.database.connection() as connection:
+            for key, value in values.items():
+                if key not in valid:
+                    continue
+                connection.execute(
+                    """INSERT INTO cliente_legajo_campos(cliente_id,seccion,campo,valor)
+                       VALUES(?,'responsable_inscripto',?,?)
+                       ON CONFLICT(cliente_id,seccion,campo) DO UPDATE SET
+                       valor=excluded.valor,actualizado_en=CURRENT_TIMESTAMP""",
+                    (client_id, key, str(value or "").strip()),
+                )
 
     @staticmethod
     def _bounds(year: int, month: int) -> tuple[str, str, str]:
@@ -95,25 +127,30 @@ class ResponsibleService:
             self.database.query_one("SELECT COUNT(*) n FROM movimientos_mercado_pago WHERE cliente_id=? AND periodo=? AND UPPER(moneda) NOT IN ('ARS','$','PESOS')", (client_id, period)),
         ))
         ledger = LedgerService(self.database).summary(client_id)
-        due = [row for row in AdministrativeService(self.database).list("vencimientos") if int(row.get("cliente_id") or 0) == client_id and str(row.get("estado", "")).casefold() not in ("pagado", "cumplido", "no corresponde") and period <= str(row.get("fecha_vencimiento") or "")[:7] <= end[:7]]
+        all_due = [row for row in AdministrativeService(self.database).list("vencimientos") if int(row.get("cliente_id") or 0) == client_id and str(row.get("estado", "")).casefold() not in ("pagado", "cumplido", "no corresponde")]
+        due = [row for row in all_due if period <= str(row.get("fecha_vencimiento") or "")[:7] <= end[:7]]
+        overdue_due = [row for row in all_due if str(row.get("fecha_vencimiento") or "") and str(row.get("fecha_vencimiento")) < date.today().isoformat()]
         active_alerts = self.database.query_one("SELECT COUNT(*) n FROM alertas_fiscales WHERE cliente_id=? AND estado IN ('activa','pendiente')", (client_id,))
         high_alerts = self.database.query_one("SELECT COUNT(*) n FROM alertas_fiscales WHERE cliente_id=? AND estado IN ('activa','pendiente') AND LOWER(gravedad) IN ('alta','urgente')", (client_id,))
         dedicated_docs = self.database.query_one("SELECT COUNT(*) n FROM documentacion WHERE cliente_id=? AND LOWER(estado) NOT IN ('recibida','recibido','aprobada','aprobado','no corresponde')", (client_id,))
-        dedicated_fees = self.database.query_one("SELECT COUNT(*) n FROM honorarios WHERE cliente_id=? AND saldo_pendiente>0 AND LOWER(estado) NOT IN ('cobrado','cobrado total','bonificado','anulado','no corresponde')", (client_id,))
+        dedicated_fees = self.database.query_one("SELECT COUNT(*) n,COALESCE(SUM(saldo_pendiente),0) total FROM honorarios WHERE cliente_id=? AND saldo_pendiente>0 AND LOWER(estado) NOT IN ('cobrado','cobrado total','bonificado','anulado','no corresponde')", (client_id,))
         overdue_fees = self.database.query_one("SELECT COUNT(*) n FROM honorarios WHERE cliente_id=? AND saldo_pendiente>0 AND fecha_vencimiento<DATE('now') AND LOWER(estado) NOT IN ('cobrado','cobrado total','bonificado','anulado','no corresponde')", (client_id,))
-        risk = ledger.get("riesgo_general") or "Bajo"
+        profile = self.profile(client_id)
+        risk = profile.get("ctrl_riesgo") or ledger.get("riesgo_general") or "Bajo"
         if int(high_alerts["n"] or 0) and risk.casefold() not in ("alto", "urgente"): risk = "Revisar"
-        fiscal_state = "Con deuda" if ledger.get("pagos_vencidos") or int(overdue_fees["n"] or 0) else ("Con alertas" if int(active_alerts["n"] or 0) else str(client.get("estado") or "Activo").title())
+        fiscal_state = profile.get("ctrl_estado") or ("Con deuda" if ledger.get("pagos_vencidos") or int(overdue_fees["n"] or 0) else ("Con alertas" if int(active_alerts["n"] or 0) else str(client.get("estado") or "Activo").title()))
         return {
             "client": client, "period": period, **current,
             "ventas_anio": sales_year, "compras_anio": purchases_year,
             "ventas_12": sales_12, "compras_12": purchases_12,
             "retenciones": retentions, "percepciones": perceptions,
             "iibb_estimado": iibb_estimated, "significativos": significant,
-            "usd": usd, "vencimientos_proximos": len(due),
+            "usd": usd, "vencimientos_proximos": len(due), "vencimientos_vencidos": len(overdue_due),
             "documentacion_pendiente": ledger["documentacion_pendiente"] + int(dedicated_docs["n"] or 0),
-            "tareas_pendientes": ledger["tareas_pendientes"],
+            "tareas_pendientes": ledger["tareas_pendientes"], "tareas_vencidas": ledger["tareas_vencidas"],
             "pagos_pendientes": ledger["pagos_pendientes"] + int(dedicated_fees["n"] or 0),
+            "honorarios_pendientes": round(float(ledger["total_pendiente"] or 0) + float(dedicated_fees["total"] or 0), 2),
+            "honorarios_vencidos": bool(ledger["pagos_vencidos"] or int(overdue_fees["n"] or 0)),
             "alertas_activas": int(active_alerts["n"] or 0),
             "riesgo_fiscal": risk, "estado_fiscal": fiscal_state,
         }
@@ -177,7 +214,7 @@ class ResponsibleService:
         return sorted(grouped.values(), key=lambda item: item["total"], reverse=True)
 
     def vencimientos(self, client_id: int) -> list[dict]:
-        hidden = {"id", "cliente_id", "responsable", "actualizado_en", "_ledger_section"}
+        hidden = {"cliente_id", "responsable", "actualizado_en", "_ledger_section"}
         return [{key: value for key, value in row.items() if key not in hidden} for row in AdministrativeService(self.database).list("vencimientos") if int(row.get("cliente_id") or 0) == client_id]
 
     def alerts(self, client_id: int) -> list[dict]:

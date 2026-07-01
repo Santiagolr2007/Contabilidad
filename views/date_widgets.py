@@ -88,3 +88,30 @@ class CalendarDialog(tk.Toplevel):
     def select(self, day: int) -> None:
         self.callback(date(self.year, self.month, day))
         self.destroy()
+
+
+def ask_date(parent, title: str, label: str, initial: date | None = None) -> str | None:
+    """Solicita una fecha con el mismo selector de calendario del resto del sistema."""
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.transient(parent.winfo_toplevel())
+    dialog.grab_set()
+    dialog.resizable(False, False)
+    value = tk.StringVar(value=(initial or date.today()).strftime("%d/%m/%Y"))
+    result: dict[str, str | None] = {"value": None}
+    body = ttk.Frame(dialog, padding=16)
+    body.pack(fill="both", expand=True)
+    ttk.Label(body, text=label).grid(row=0, column=0, sticky="w", pady=(0, 8))
+    DateEntry(body, value).grid(row=1, column=0, sticky="ew")
+    actions = ttk.Frame(body)
+    actions.grid(row=2, column=0, sticky="e", pady=(14, 0))
+    ttk.Button(actions, text="Cancelar", command=dialog.destroy).pack(side="right")
+
+    def accept() -> None:
+        result["value"] = value.get().strip()
+        dialog.destroy()
+
+    ttk.Button(actions, text="Aceptar", style="Primary.TButton", command=accept).pack(side="right", padx=6)
+    body.columnconfigure(0, weight=1)
+    dialog.wait_window()
+    return result["value"]

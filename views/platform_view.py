@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import tempfile
 import tkinter as tk
 from datetime import date
@@ -84,7 +83,6 @@ class BasePlatformPanel(ttk.Frame):
         actions = ttk.Frame(frame); actions.pack(fill="x", pady=(0, 5))
         ttk.Button(actions, text="Exportar Excel", command=lambda name=title: self.export_tab(name, "xlsx")).pack(side="right")
         ttk.Button(actions, text="Exportar PDF", command=lambda name=title: self.export_tab(name, "pdf")).pack(side="right", padx=5)
-        ttk.Button(actions, text="Imprimir", command=lambda name=title: self.print_tab(name)).pack(side="right")
         table = DynamicTable(frame); table.pack(fill="both", expand=True)
         self.tables[title] = table
         return table
@@ -98,17 +96,6 @@ class BasePlatformPanel(ttk.Frame):
         method = self.app.report_service.export_table_excel if format_name == "xlsx" else self.app.report_service.export_table_pdf
         method(Path(filename), title, rows, f"Cliente: {self.client.get()} | Período: {self.period.get() or 'Todos'}")
         messagebox.showinfo("Exportación terminada", f"Se creó:\n{filename}", parent=self)
-
-    def print_tab(self, title: str) -> None:
-        hidden = {"id", "cliente_id", "id_importacion", "actualizado_en", "datos_originales_json"}
-        rows = [{key: value for key, value in row.items() if key not in hidden} for row in self.current_rows.get(title, [])]
-        filename = filedialog.asksaveasfilename(parent=self, defaultextension=".pdf", initialfile=f"{title.replace('/', '-')}_imprimir.pdf", filetypes=(("PDF", "*.pdf"),))
-        if not filename: return
-        self.app.report_service.export_table_pdf(Path(filename), title, rows, f"Cliente: {self.client.get()}")
-        try:
-            os.startfile(filename, "print")
-        except (AttributeError, OSError):
-            messagebox.showinfo("PDF listo para imprimir", f"Abrí e imprimí:\n{filename}", parent=self)
 
     def mapping_for(self, filename: str) -> dict | None:
         preview = self.app.platform_service.preview_file(Path(filename), self.source)
@@ -127,9 +114,6 @@ class BasePlatformPanel(ttk.Frame):
 
     def export_current(self, format_name: str) -> None:
         self.export_tab(self.current_title(), format_name)
-
-    def print_current(self) -> None:
-        self.print_tab(self.current_title())
 
     def stage_file(self, title: str) -> bool:
         filename = filedialog.askopenfilename(parent=self, title=title, filetypes=(("Excel o CSV", "*.xls *.xlsx *.csv"),))
@@ -172,7 +156,6 @@ class MercadoPagoPanel(BasePlatformPanel):
         ttk.Button(toolbar, text="Limpiar datos", command=self.clean_all).pack(side="left", padx=(10,4))
         ttk.Button(toolbar, text="Exportar Excel", command=lambda:self.export_current("xlsx")).pack(side="left", padx=4)
         ttk.Button(toolbar, text="Exportar PDF", command=lambda:self.export_current("pdf")).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="Imprimir", command=self.print_current).pack(side="left", padx=4)
         utility = ttk.Frame(self); utility.pack(fill="x", pady=(0, 6))
         ttk.Button(utility, text="Editar clasificación", command=self.edit_classification).pack(side="left")
         ttk.Button(utility, text="Limpiar período", command=self.clean_period).pack(side="left", padx=6)
@@ -297,7 +280,6 @@ class MercadoLibrePanel(BasePlatformPanel):
         ttk.Button(toolbar, text="Limpiar datos", command=self.clean_all).pack(side="left", padx=(10,4))
         ttk.Button(toolbar, text="Exportar Excel", command=lambda:self.export_current("xlsx")).pack(side="left", padx=4)
         ttk.Button(toolbar, text="Exportar PDF", command=lambda:self.export_current("pdf")).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="Imprimir", command=self.print_current).pack(side="left", padx=4)
         utility = ttk.Frame(self); utility.pack(fill="x", pady=(0, 6))
         ttk.Button(utility,text="Editar clasificación",command=self.edit_classification).pack(side="left")
         ttk.Button(utility, text="Limpiar período", command=self.clean_period).pack(side="left", padx=6)
@@ -494,7 +476,7 @@ class ImportHistoryDialog(tk.Toplevel):
     def __init__(self, parent, app, client_id: int, callback) -> None:
         super().__init__(parent); self.app, self.client_id, self.callback = app, client_id, callback; self.title("Historial de importaciones"); fit_window(self, 1150, 620); self.transient(parent.winfo_toplevel()); self.grab_set()
         top = ttk.Frame(self, padding=10); top.pack(fill="x"); ttk.Label(top, text="Historial de importaciones", style="Title.TLabel").pack(side="left")
-        ttk.Button(top, text="Cerrar", command=self.destroy).pack(side="right"); ttk.Button(top, text="Eliminar importación", command=self.delete).pack(side="right", padx=6); ttk.Button(top, text="Exportar Excel", command=lambda:self.export("xlsx")).pack(side="right"); ttk.Button(top, text="Exportar PDF", command=lambda:self.export("pdf")).pack(side="right", padx=5); ttk.Button(top, text="Imprimir", command=lambda:self.export("pdf",True)).pack(side="right")
+        ttk.Button(top, text="Cerrar", command=self.destroy).pack(side="right"); ttk.Button(top, text="Eliminar importación", command=self.delete).pack(side="right", padx=6); ttk.Button(top, text="Exportar Excel", command=lambda:self.export("xlsx")).pack(side="right"); ttk.Button(top, text="Exportar PDF", command=lambda:self.export("pdf")).pack(side="right", padx=5)
         self.table = DynamicTable(self); self.table.pack(fill="both", expand=True, padx=10, pady=(0,10)); self.refresh()
 
     def refresh(self): self.rows = self.app.platform_service.imports(self.client_id); self.table.fill(self.rows)
@@ -504,11 +486,8 @@ class ImportHistoryDialog(tk.Toplevel):
         row = self.table.row_by_item[selected[0]]
         if messagebox.askyesno("Confirmar", "¿Borrar todos los datos de este archivo importado?", parent=self):
             self.app.platform_service.delete_import(int(row["id"]), self.client_id); self.refresh(); self.callback()
-    def export(self, format_name: str, print_after: bool = False):
+    def export(self, format_name: str):
         extension=f".{format_name}"; filename = filedialog.asksaveasfilename(parent=self, defaultextension=extension, initialfile=f"Historial_importaciones{extension}", filetypes=((format_name.upper(), f"*{extension}"),))
         if not filename:return
         method=self.app.report_service.export_table_excel if format_name=="xlsx" else self.app.report_service.export_table_pdf
         method(Path(filename), "Historial de importaciones", self.rows, self.app.client_service.get_bundle(self.client_id)["client"]["nombre_razon_social"])
-        if print_after:
-            try:os.startfile(filename,"print")
-            except OSError:messagebox.showinfo("PDF listo",f"Abrí e imprimí:\n{filename}",parent=self)

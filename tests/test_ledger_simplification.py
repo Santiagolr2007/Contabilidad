@@ -86,7 +86,8 @@ class LedgerSimplificationTests(unittest.TestCase):
         output = Path(self.temporary.name) / "legajo_activo.xlsx"
         self.exporter.export_excel(output, self.client_id)
         workbook = load_workbook(output, read_only=True)
-        self.assertEqual(len(workbook.sheetnames), 14)
+        self.assertEqual(len(workbook.sheetnames), 15)
+        self.assertIn("Responsable Inscripto", workbook.sheetnames)
         self.assertNotIn("Valores Mensuales", workbook.sheetnames)
         self.assertNotIn("Contactos ARCA", workbook.sheetnames)
         self.assertNotIn("Domicilios ARCA", workbook.sheetnames)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import tkinter as tk
 import re
-import os
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -90,7 +89,6 @@ class ReportsView(ttk.Frame):
             command=self.export,
         ).pack(side="left")
         ttk.Button(actions, text="Exportar a PDF", command=lambda: self.export_pdf(False)).pack(side="left", padx=8)
-        ttk.Button(actions, text="Imprimir", command=lambda: self.export_pdf(True)).pack(side="left")
         box.columnconfigure(1, weight=1)
 
     def _selected_client_id(self) -> int | None:
@@ -155,7 +153,7 @@ class ReportsView(ttk.Frame):
         except Exception as error:
             messagebox.showerror("No se pudo exportar", str(error))
 
-    def export_pdf(self, print_after: bool = False) -> None:
+    def export_pdf(self) -> None:
         filename = filedialog.asksaveasfilename(
             parent=self, defaultextension=".pdf", filetypes=(("PDF", "*.pdf"),),
             initialfile=self._safe_filename(self.report.get()) + ".pdf",
@@ -172,11 +170,7 @@ class ReportsView(ttk.Frame):
                 self.task_state_filter.get(),self.task_area_filter.get().strip(),
                 self.task_type_filter.get().strip(),self.task_priority_filter.get(),
             )
-            if print_after:
-                try: os.startfile(filename, "print")
-                except OSError: messagebox.showinfo("PDF listo", f"Abrí e imprimí:\n{filename}")
-            else:
-                messagebox.showinfo("Reporte creado", f"Se creó:\n{filename}")
+            messagebox.showinfo("Reporte creado", f"Se creó:\n{filename}")
         except Exception as error:
             messagebox.showerror("No se pudo exportar", str(error))
 

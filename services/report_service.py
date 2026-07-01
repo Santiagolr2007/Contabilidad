@@ -789,6 +789,7 @@ class ReportService:
         profiles = {
             "Resumen": {
                 "Nombre / Razón social": client.get("nombre_razon_social", ""),
+                "Legajo": client.get("legajo", ""),
                 "CUIT / CUIL": client.get("cuit_cuil", ""),
                 "Tipo de persona": client.get("tipo_persona", ""),
                 "Condición fiscal": client.get("regimen_principal", ""),

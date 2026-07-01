@@ -12,11 +12,12 @@ from openpyxl.styles import Font, PatternFill
 
 from database import Database
 from .ledger_service import LedgerService
+from .responsible_profile import RESPONSIBLE_PROFILE_SECTIONS
 
 
 class LedgerExportService:
     SECTION_ORDER = (
-        "resumen", "datos_cliente",
+        "resumen", "datos_cliente", "responsable_inscripto",
         *LedgerService.VISIBLE_SECTIONS,
     )
 
@@ -38,8 +39,9 @@ class LedgerExportService:
             for hidden in ("responsable_interno", "ultima_actualizacion"):
                 summary.pop(hidden, None)
             values = {
-                "Nombre / Razón social": client["nombre_razon_social"],
-                "CUIT / CUIL": client["cuit_cuil"],
+                "Cliente": client["nombre_razon_social"],
+                "Legajo": client.get("legajo", ""),
+                "CUIT": client["cuit_cuil"],
                 "Tipo": summary.get("tipo_cliente", client["tipo_persona"]),
                 "Condición fiscal": str(client["regimen_principal"]).replace("_", " ").title(),
                 "Estado cliente": summary.get("estado_cliente", client["estado"]),
@@ -53,11 +55,18 @@ class LedgerExportService:
                 "SELECT * FROM clientes WHERE id=?", (client_id,)
             )
             hidden = {"id", "creado_en", "actualizado_en"}
-            result = [
-                {"Campo": key.replace("_", " ").title(), "Valor": value}
-                for key, value in dict(row).items()
-                if key not in hidden
-            ] if row else []
+            values = dict(row) if row else {}
+            ordered = (
+                ("fecha_alta_estudio", "Fecha de alta en el estudio"), ("legajo", "Legajo"),
+                ("nombre_razon_social", "Cliente"), ("cuit_cuil", "CUIT"), ("dni", "DNI"),
+                ("fecha_nacimiento", "Fecha de nacimiento"), ("nacionalidad", "Nacionalidad"),
+                ("estado_civil", "Estado civil"), ("tipo_persona_detalle", "Tipo de persona"),
+                ("instagram", "Instagram"), ("telefono", "Teléfono"), ("email", "Mail"),
+                ("domicilio", "Domicilio"), ("codigo_actividad", "Código de actividad"),
+                ("actividad", "Actividad"), ("estado_detalle", "Estado"), ("rubro", "Rubro"),
+                ("observaciones", "Observaciones"),
+            )
+            result = [{"Campo": label, "Valor": values.get(key, "")} for key, label in ordered]
             records = self.ledger.list_records(client_id, "datos_complementarios")
             if records:
                 fields = self.ledger.SECTIONS["datos_complementarios"][1]
@@ -68,6 +77,20 @@ class LedgerExportService:
                     if key in labels and value not in (None, "")
                 )
             return result
+        if section == "responsable_inscripto":
+            values = {
+                str(row["campo"]): row["valor"]
+                for row in self.database.query(
+                    """SELECT campo,valor FROM cliente_legajo_campos
+                       WHERE cliente_id=? AND seccion='responsable_inscripto'""",
+                    (client_id,),
+                )
+            }
+            rows = []
+            for group, fields in RESPONSIBLE_PROFILE_SECTIONS:
+                for key, label, _kind in fields:
+                    rows.append({"Sección": group, "Campo": label, "Valor": values.get(key, "")})
+            return rows
         rows = self.ledger.list_records(client_id, section)
         flattened = []
         for row in rows:
@@ -88,6 +111,7 @@ class LedgerExportService:
     def section_title(self, section: str) -> str:
         if section == "resumen": return "Resumen"
         if section == "datos_cliente": return "Datos Cliente"
+        if section == "responsable_inscripto": return "Responsable Inscripto"
         return self.ledger.SECTIONS[section][0]
 
     def export_excel(
@@ -123,10 +147,11 @@ class LedgerExportService:
         for sheet in workbook.worksheets:
             sheet.sheet_view.showGridLines = False
             sheet["A1"] = "Cliente"; sheet["B1"] = client["nombre_razon_social"]
-            sheet["A2"] = "CUIT / CUIL"; sheet["B2"] = client["cuit_cuil"]
-            sheet["A3"] = "Fecha de exportación"; sheet["B3"] = date.today()
-            sheet["B3"].number_format = "dd/mm/yyyy"
-            for row in range(1, 4):
+            sheet["A2"] = "Legajo"; sheet["B2"] = client.get("legajo", "")
+            sheet["A3"] = "CUIT"; sheet["B3"] = client["cuit_cuil"]
+            sheet["A4"] = "Fecha de exportación"; sheet["B4"] = date.today()
+            sheet["B4"].number_format = "dd/mm/yyyy"
+            for row in range(1, 5):
                 sheet.cell(row, 1).font = Font(bold=True, color="1F4E78")
             sheet.freeze_panes = "A7"
             sheet.auto_filter.ref = f"A6:{sheet.cell(sheet.max_row, sheet.max_column).coordinate}"
@@ -203,7 +228,8 @@ class LedgerExportService:
         story.extend([
             Paragraph("Legajo del cliente", styles["Title"]),
             Paragraph(str(client["nombre_razon_social"]), styles["Heading2"]),
-            Paragraph(f"CUIT / CUIL: {client['cuit_cuil']}", styles["Normal"]),
+            Paragraph(f"Legajo: {client.get('legajo', '')}", styles["Normal"]),
+            Paragraph(f"CUIT: {client['cuit_cuil']}", styles["Normal"]),
             Paragraph(f"Tipo de cliente: {summary['tipo_cliente']}", styles["Normal"]),
             Paragraph(f"Condición fiscal: {str(client['regimen_principal']).replace('_', ' ').title()}", styles["Normal"]),
             Paragraph(f"Estado: {summary['estado_cliente']}", styles["Normal"]),
@@ -232,6 +258,29 @@ class LedgerExportService:
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F8FA")]),
                     ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ]))
+                story.append(table)
+                continue
+            keys = list(rows[0])
+            if len(keys) <= 6 and all(list(row) == keys for row in rows):
+                data = [[Paragraph(str(key).replace("_", " ").title(), styles["BodyText"]) for key in keys]]
+                data.extend([
+                    [Paragraph(pdf_value(key, row.get(key)), styles["BodyText"]) for key in keys]
+                    for row in rows
+                ])
+                if keys == ["Sección", "Campo", "Valor"]:
+                    widths = (45 * mm, 90 * mm, 45 * mm)
+                else:
+                    widths = tuple((180 / len(keys)) * mm for _key in keys)
+                table = Table(data, colWidths=widths, repeatRows=1)
+                table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E78")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D0D7DE")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F8FA")]),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
                 ]))
                 story.append(table)
                 continue
@@ -270,8 +319,9 @@ class LedgerExportService:
             summary = self.ledger.summary(client_id)
             client = summary["client"]
             result.append({
-                "Nombre / Razón social": client["nombre_razon_social"],
-                "CUIT / CUIL": client["cuit_cuil"],
+                "Cliente": client["nombre_razon_social"],
+                "Legajo": client.get("legajo", ""),
+                "CUIT": client["cuit_cuil"],
                 "Tipo": summary["tipo_cliente"],
                 "Condición fiscal": str(client["regimen_principal"]).replace("_", " ").title(),
                 "Estado cliente": summary["estado_cliente"],
@@ -282,7 +332,7 @@ class LedgerExportService:
                 "Riesgo": summary["riesgo_general"],
                 "Último control": summary["ultimo_control"],
                 "Próximo vencimiento": summary["proximo_vencimiento"],
-                "Observaciones internas": summary["observacion_ejecutiva"],
+                "Observaciones": summary["observacion_ejecutiva"],
             })
         return result
 
@@ -317,10 +367,10 @@ class LedgerExportService:
             raise ValueError("No hay clientes visibles para exportar.")
         destination.parent.mkdir(parents=True, exist_ok=True)
         styles = getSampleStyleSheet()
-        headers = ("Nombre / Razón social", "CUIT / CUIL", "Condición fiscal", "Estado legajo", "Pagos", "Documentación", "Riesgo", "Próximo vencimiento")
+        headers = ("Cliente", "Legajo", "CUIT", "Condición fiscal", "Estado legajo", "Pagos", "Documentación", "Riesgo", "Próximo vencimiento")
         data = [[Paragraph(header, styles["BodyText"]) for header in headers]]
         data.extend([[Paragraph(str(row.get(header, "") or ""), styles["BodyText"]) for header in headers] for row in rows])
-        table = Table(data, colWidths=(52*mm, 28*mm, 34*mm, 28*mm, 24*mm, 30*mm, 20*mm, 31*mm), repeatRows=1)
+        table = Table(data, colWidths=(44*mm, 20*mm, 27*mm, 31*mm, 26*mm, 22*mm, 27*mm, 18*mm, 29*mm), repeatRows=1)
         table.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1F4E78")), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.grey), ("VALIGN", (0,0), (-1,-1), "TOP"), ("FONTSIZE", (0,0), (-1,-1), 7)]))
         story = [Paragraph("Índice Maestro de Clientes", styles["Title"]), Paragraph(f"Fecha de exportación: {date.today().strftime('%d/%m/%Y')}", styles["Normal"]), Spacer(1, 5*mm), table]
         SimpleDocTemplate(str(destination), pagesize=landscape(A4), rightMargin=10*mm, leftMargin=10*mm, topMargin=12*mm, bottomMargin=12*mm).build(story)

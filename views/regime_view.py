@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import tkinter as tk
 from datetime import date
 from pathlib import Path
@@ -33,7 +32,6 @@ class RegimeView(ttk.Frame):
             ttk.Button(toolbar, text="Abrir legajo integral", command=self.open_ledger).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Exportar Excel", command=lambda: self.export("xlsx")).pack(side="left", padx=(12, 4))
         ttk.Button(toolbar, text="Exportar PDF", command=lambda: self.export("pdf")).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="Imprimir", command=lambda: self.export("pdf", True)).pack(side="left", padx=4)
         ttk.Button(toolbar, text="Actualizar", command=self.refresh).pack(side="right")
 
         self.search = tk.StringVar()
@@ -203,16 +201,13 @@ class RegimeView(ttk.Frame):
             "Riesgo general": row.get("riesgo_general", ""), "Alertas": row.get("alertas", 0),
         } for row in self.rows]
 
-    def export(self, format_name: str, print_after: bool = False) -> None:
+    def export(self, format_name: str) -> None:
         extension = ".xlsx" if format_name == "xlsx" else ".pdf"
         filename = filedialog.asksaveasfilename(parent=self, defaultextension=extension, filetypes=(("Excel", "*.xlsx"),) if format_name == "xlsx" else (("PDF", "*.pdf"),), initialfile=f"{self.title_text} {self.year.get()}{extension}")
         if not filename: return
         try:
             method = self.app.report_service.export_table_excel if format_name == "xlsx" else self.app.report_service.export_table_pdf
             method(Path(filename), self.title_text, self._export_rows(), f"Año {self.year.get()} · Mes {self.month.get()}")
-            if print_after:
-                try: os.startfile(filename, "print")
-                except OSError: messagebox.showinfo("PDF listo", f"Abrí e imprimí:\n{filename}", parent=self)
-            else: messagebox.showinfo("Exportación terminada", f"Se creó:\n{filename}", parent=self)
+            messagebox.showinfo("Exportación terminada", f"Se creó:\n{filename}", parent=self)
         except Exception as error:
             messagebox.showerror("No se pudo exportar", str(error), parent=self)

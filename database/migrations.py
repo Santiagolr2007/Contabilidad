@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
+import re
 import sqlite3
 
 
 CLIENT_COLUMNS = {
+    "legajo": "TEXT DEFAULT ''",
+    "codigo_actividad": "TEXT DEFAULT ''",
+    "tipo_persona_detalle": "TEXT DEFAULT ''",
+    "estado_detalle": "TEXT DEFAULT ''",
     "dni": "TEXT DEFAULT ''",
     "fecha_nacimiento": "TEXT",
     "nacionalidad": "TEXT DEFAULT ''",
@@ -41,6 +47,8 @@ def _add_columns(
     existing = {
         row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
     }
+    if not existing:
+        return
     for name, definition in columns.items():
         if name not in existing:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
@@ -75,6 +83,7 @@ def migrate_database(connection: sqlite3.Connection) -> None:
         connection,
         "honorarios",
         {
+            "numero_presupuesto": "TEXT DEFAULT ''",
             "tipo_registro": "TEXT DEFAULT 'Honorario'",
             "fecha_vencimiento": "TEXT",
             "importe_pagado": "REAL DEFAULT 0",
@@ -83,6 +92,21 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             "comprobante_emitido": "TEXT DEFAULT ''",
             "tipo_comprobante": "TEXT DEFAULT ''",
             "condiciones_presupuesto": "TEXT DEFAULT ''",
+        },
+    )
+    _add_columns(
+        connection,
+        "documentacion",
+        {
+            "obligatorio": "TEXT DEFAULT 'Según caso'",
+            "archivo_link": "TEXT DEFAULT ''",
+        },
+    )
+    _add_columns(
+        connection,
+        "cliente_legajo_registros",
+        {
+            "numero_presupuesto": "TEXT DEFAULT ''",
         },
     )
     _add_columns(
@@ -180,6 +204,7 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             vencimiento TEXT,
             datos_json TEXT NOT NULL DEFAULT '{}',
             responsable TEXT NOT NULL DEFAULT 'NATALIA',
+            numero_presupuesto TEXT DEFAULT '',
             creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             actualizado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
@@ -206,6 +231,13 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             ON cliente_legajo_registros(vencimiento, estado);
         CREATE INDEX IF NOT EXISTS idx_historial_cliente_fecha
             ON cliente_historial(cliente_id, fecha);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_clientes_legajo_unico
+            ON clientes(legajo) WHERE legajo <> '';
+        DROP INDEX IF EXISTS idx_presupuesto_legajo_unico;
+        CREATE UNIQUE INDEX idx_presupuesto_legajo_unico
+            ON cliente_legajo_registros(numero_presupuesto)
+            WHERE numero_presupuesto <> '' AND seccion = 'servicio_presupuesto';
 
         CREATE TABLE IF NOT EXISTS iibb_jurisdicciones_cliente (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,6 +346,7 @@ def migrate_database(connection: sqlite3.Connection) -> None:
             ON operaciones_mercado_libre(cliente_id, id_operacion, id_venta);
         """
     )
+    _backfill_internal_numbers(connection)
     _add_columns(
         connection,
         "ingresos_brutos_cliente",
@@ -584,3 +617,56 @@ def migrate_database(connection: sqlite3.Connection) -> None:
         connection.execute(
             f"DELETE FROM {table} WHERE cliente_id NOT IN (SELECT id FROM clientes)"
         )
+
+
+def _backfill_internal_numbers(connection: sqlite3.Connection) -> None:
+    """Asigna códigos correlativos a registros antiguos sin alterar códigos válidos."""
+    used_ledgers = {
+        str(row[0]).upper()
+        for row in connection.execute("SELECT legajo FROM clientes WHERE legajo<>''")
+    }
+    next_ledger = 10
+    for row in connection.execute("SELECT id,legajo FROM clientes ORDER BY id").fetchall():
+        value = str(row[1] or "").strip().upper()
+        if value:
+            continue
+        while f"EA-{next_ledger:04d}" in used_ledgers:
+            next_ledger += 1
+        value = f"EA-{next_ledger:04d}"
+        connection.execute("UPDATE clientes SET legajo=? WHERE id=?", (value, row[0]))
+        used_ledgers.add(value)
+        next_ledger += 1
+
+    next_budget = 10
+    records = connection.execute(
+        """SELECT id,numero_presupuesto,datos_json FROM cliente_legajo_registros
+           WHERE seccion='servicio_presupuesto' ORDER BY id"""
+    ).fetchall()
+    reserved = set()
+    for _record_id, stored_number, raw_json in records:
+        try:
+            data = json.loads(raw_json or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        value = str(data.get("numero_presupuesto") or stored_number or "").strip().upper()
+        if re.fullmatch(r"EAP-\d{4,}", value):
+            reserved.add(value)
+    seen = set()
+    for record_id, stored_number, raw_json in records:
+        try:
+            data = json.loads(raw_json or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        value = str(data.get("numero_presupuesto") or stored_number or "").strip().upper()
+        if not re.fullmatch(r"EAP-\d{4,}", value) or value in seen:
+            while f"EAP-{next_budget:04d}" in reserved or f"EAP-{next_budget:04d}" in seen:
+                next_budget += 1
+            value = f"EAP-{next_budget:04d}"
+            next_budget += 1
+        data["numero_presupuesto"] = value
+        connection.execute(
+            "UPDATE cliente_legajo_registros SET numero_presupuesto=?,datos_json=? WHERE id=?",
+            (value, json.dumps(data, ensure_ascii=False), record_id),
+        )
+        reserved.add(value)
+        seen.add(value)

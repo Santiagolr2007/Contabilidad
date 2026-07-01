@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import tkinter as tk
 from datetime import date
 from pathlib import Path
@@ -9,6 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from utils.formatters import display_date, display_period, money, number_ar
 
 from .common import MetricCard, ScrollableFrame, make_tree_sortable
+from .date_widgets import ask_date
 from .ledger_view import ClientLedgerDialog, TwoRowNotebook
 from .theme import COLORS
 
@@ -47,7 +47,6 @@ class ResponsibleInscriptoView(ttk.Frame):
         ttk.Button(controls, text="Reportes", command=self.open_reports_tab).grid(row=1, column=4, columnspan=2, sticky="w", padx=5, pady=(5, 0))
         ttk.Button(controls, text="Exportar Excel", command=lambda: self.export_current("xlsx")).grid(row=1, column=6, padx=4, pady=(5, 0))
         ttk.Button(controls, text="Exportar PDF", command=lambda: self.export_current("pdf")).grid(row=1, column=7, padx=4, pady=(5, 0))
-        ttk.Button(controls, text="Imprimir", command=self.print_current).grid(row=1, column=8, padx=4, pady=(5, 0))
         controls.columnconfigure(1, weight=1)
 
         self.details = TwoRowNotebook(self, columns=7)
@@ -107,10 +106,15 @@ class ResponsibleInscriptoView(ttk.Frame):
         state = str(data["estado_fiscal"] or "Activo")
         red_if = lambda condition: COLORS["red"] if condition else COLORS["green"]
         cards = (
-            ("Condición fiscal", "Responsable Inscripto", COLORS["green"]),
-            ("Denominación / Actividad", data["client"].get("actividad") or "Sin datos", COLORS["blue"]),
-            ("Estado fiscal", state, red_if(state.casefold() in ("con deuda", "con alertas", "baja"))),
-            ("Riesgo fiscal", risk, red_if(risk.casefold() in ("alto", "urgente", "revisar"))),
+            ("Legajo", data["client"].get("legajo") or "Sin datos", COLORS["blue"]),
+            ("Cliente", data["client"].get("nombre_razon_social") or "Sin datos", COLORS["blue"]),
+            ("CUIT", data["client"].get("cuit_cuil") or "Sin datos", COLORS["blue"]),
+            ("Estado", state, COLORS["green"] if state.casefold() in ("activo", "ok") else (COLORS["red"] if state.casefold() in ("urgente", "con deuda", "baja") else COLORS["amber"])),
+            ("Riesgo", risk, COLORS["green"] if risk.casefold() == "bajo" else (COLORS["red"] if risk.casefold() in ("alto", "urgente") else COLORS["amber"])),
+            ("Honorarios pendientes", money(data["honorarios_pendientes"]), COLORS["red"] if data["honorarios_vencidos"] else (COLORS["amber"] if data["honorarios_pendientes"] else COLORS["green"])),
+            ("Documentación", f"{data['documentacion_pendiente']} pendientes", COLORS["amber"] if data["documentacion_pendiente"] else COLORS["green"]),
+            ("Tareas", f"{data['tareas_pendientes']} pendientes", COLORS["red"] if data["tareas_vencidas"] else (COLORS["amber"] if data["tareas_pendientes"] else COLORS["green"])),
+            ("Vencimientos", f"{data['vencimientos_vencidos']} vencidos" if data["vencimientos_vencidos"] else f"{data['vencimientos_proximos']} próximos", COLORS["red"] if data["vencimientos_vencidos"] else (COLORS["orange"] if data["vencimientos_proximos"] else COLORS["green"])),
             ("Ventas del mes", money(data["ventas"]), COLORS["blue"]),
             ("Compras del mes", money(data["compras"]), COLORS["amber"]),
             ("Ventas año calendario", money(data["ventas_anio"]), COLORS["blue"]),
@@ -120,15 +124,8 @@ class ResponsibleInscriptoView(ttk.Frame):
             ("IVA débito fiscal del mes", money(data["iva_debito"]), COLORS["blue"]),
             ("IVA crédito fiscal del mes", money(data["iva_credito"]), COLORS["blue"]),
             ("Saldo IVA estimado", money(data["saldo_iva"]), red_if(data["saldo_iva"] > 0)),
-            ("Retenciones sufridas", money(data["retenciones"]), "#EA580C"),
-            ("Percepciones sufridas", money(data["percepciones"]), "#EA580C"),
             ("IIBB estimado", money(data["iibb_estimado"]), COLORS["green"]),
-            ("Comprobantes significativos", str(data["significativos"]), red_if(data["significativos"] > 0)),
-            ("Operaciones USD / alertas", f"{data['usd']} / {data['alertas_activas']}", red_if(data["usd"] + data["alertas_activas"] > 0)),
-            ("Vencimientos próximos", str(data["vencimientos_proximos"]), red_if(data["vencimientos_proximos"] > 0)),
-            ("Documentación pendiente", str(data["documentacion_pendiente"]), COLORS["amber"] if data["documentacion_pendiente"] else COLORS["green"]),
-            ("Tareas pendientes", str(data["tareas_pendientes"]), COLORS["amber"] if data["tareas_pendientes"] else COLORS["green"]),
-            ("Pagos al estudio pendientes", str(data["pagos_pendientes"]), COLORS["red"] if data["pagos_pendientes"] else COLORS["green"]),
+            ("Alertas", str(data["alertas_activas"]), COLORS["red"] if data["alertas_activas"] else COLORS["green"]),
         )
         frame.columnconfigure(0, minsize=290); frame.columnconfigure(1, minsize=290); frame.columnconfigure(2, minsize=290)
         for index, (title, value, color) in enumerate(cards):
@@ -144,9 +141,17 @@ class ResponsibleInscriptoView(ttk.Frame):
         }
         raw_rows.extend({"Indicador": key, "Valor": value} for key, value in numeric.items())
         raw_rows.extend((
-            {"Indicador": "Condición fiscal", "Valor": "Responsable Inscripto"},
-            {"Indicador": "Actividad", "Valor": data["client"].get("actividad", "")},
-            {"Indicador": "Estado fiscal", "Valor": state}, {"Indicador": "Riesgo fiscal", "Valor": risk},
+            {"Indicador": "Legajo", "Valor": data["client"].get("legajo", "")},
+            {"Indicador": "Cliente", "Valor": data["client"].get("nombre_razon_social", "")},
+            {"Indicador": "CUIT", "Valor": data["client"].get("cuit_cuil", "")},
+            {"Indicador": "Estado", "Valor": state}, {"Indicador": "Riesgo", "Valor": risk},
+            {"Indicador": "Honorarios pendientes", "Valor": data["honorarios_pendientes"]},
+            {"Indicador": "Documentación pendiente", "Valor": data["documentacion_pendiente"]},
+            {"Indicador": "Tareas pendientes", "Valor": data["tareas_pendientes"]},
+            {"Indicador": "Tareas vencidas", "Valor": data["tareas_vencidas"]},
+            {"Indicador": "Vencimientos próximos", "Valor": data["vencimientos_proximos"]},
+            {"Indicador": "Vencimientos vencidos", "Valor": data["vencimientos_vencidos"]},
+            {"Indicador": "Alertas", "Valor": data["alertas_activas"]},
         ))
         self.tab_rows["Resumen"] = raw_rows
 
@@ -175,7 +180,6 @@ class ResponsibleInscriptoView(ttk.Frame):
         ttk.Label(actions, text=f"{len(rows)} registros", style="Subtitle.TLabel").pack(side="left")
         ttk.Button(actions, text="Exportar Excel", command=lambda: self.export_tab(title, "xlsx")).pack(side="right")
         ttk.Button(actions, text="Exportar PDF", command=lambda: self.export_tab(title, "pdf")).pack(side="right", padx=5)
-        ttk.Button(actions, text="Imprimir", command=lambda: self.print_tab(title)).pack(side="right")
         holder = ttk.Frame(frame); holder.pack(fill="both", expand=True)
         display_rows = rows or [{"estado": "Sin información cargada"}]
         hidden = {"id", "cliente_id", "responsable", "actualizado_en", "ultima_actualizacion"}
@@ -192,7 +196,38 @@ class ResponsibleInscriptoView(ttk.Frame):
         tree.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
         tree.grid(row=0, column=0, sticky="nsew"); sy.grid(row=0, column=1, sticky="ns"); sx.grid(row=1, column=0, sticky="ew")
         holder.rowconfigure(0, weight=1); holder.columnconfigure(0, weight=1)
-        for row in display_rows: tree.insert("", "end", values=[self._format(key, row.get(key)) for key in columns])
+        for row in display_rows:
+            item_id = str(row["id"]) if row.get("id") is not None else None
+            tree.insert("", "end", iid=item_id, values=[self._format(key, row.get(key)) for key in columns])
+        if title == "Vencimientos":
+            def selected_id() -> int | None:
+                selected = tree.selection()
+                return int(selected[0]) if selected else None
+
+            def update_due(status: str) -> None:
+                record_id = selected_id()
+                if record_id is None:
+                    messagebox.showinfo("Seleccionar vencimiento", "Seleccioná un vencimiento.", parent=self)
+                    return
+                chosen = ask_date(self, f"Marcar como {status.casefold()}", "Fecha efectiva:", date.today())
+                if chosen is None:
+                    return
+                from utils.formatters import normalize_date
+                self.app.administrative_service.update_status("vencimientos", record_id, status, normalize_date(chosen))
+                self.refresh()
+
+            def edit_due() -> None:
+                record_id = selected_id()
+                if record_id is None:
+                    messagebox.showinfo("Seleccionar vencimiento", "Seleccioná un vencimiento.", parent=self)
+                    return
+                from .administrative_view import RecordDialog
+                RecordDialog(self, self.app, "vencimientos", self.refresh, record_id)
+
+            ttk.Button(actions, text="Marcar cumplido", command=lambda: update_due("Cumplido")).pack(side="left", padx=(8, 0))
+            ttk.Button(actions, text="Marcar pagado", command=lambda: update_due("Pagado")).pack(side="left", padx=4)
+            ttk.Button(actions, text="Editar vencimiento", command=edit_due).pack(side="left", padx=4)
+            ttk.Button(actions, text="Abrir vencimientos", command=lambda: self.app.show_view("vencimientos")).pack(side="left", padx=4)
         make_tree_sortable(tree, numeric)
         self.tab_rows[title] = [{key: value for key, value in row.items() if key not in hidden} for row in rows]
 
@@ -239,20 +274,6 @@ class ResponsibleInscriptoView(ttk.Frame):
         try:
             method = self.app.report_service.export_table_excel if format_name == "xlsx" else self.app.report_service.export_table_pdf
             year, month = self.period_values()
-            method(Path(filename), f"Responsable Inscripto - {title}", self.tab_rows.get(title, []), f"{client['nombre_razon_social']} · CUIT/CUIL {client['cuit_cuil']} · Período {month:02d}/{year}")
+            method(Path(filename), f"Responsable Inscripto - {title}", self.tab_rows.get(title, []), f"{client['nombre_razon_social']} · Legajo {client.get('legajo','')} · CUIT {client['cuit_cuil']} · Período {month:02d}/{year}")
             messagebox.showinfo("Exportación terminada", f"Se creó:\n{filename}", parent=self)
         except Exception as error: messagebox.showerror("No se pudo exportar", str(error), parent=self)
-
-    def print_current(self) -> None:
-        self.print_tab(self.current_title())
-
-    def print_tab(self, title: str) -> None:
-        client_id = self.client_id()
-        if not client_id: return
-        client = next(row for row in self.clients if int(row["id"]) == client_id)
-        filename = filedialog.asksaveasfilename(parent=self, defaultextension=".pdf", initialfile=f"Responsable Inscripto - {title}.pdf", filetypes=(("PDF", "*.pdf"),))
-        if not filename: return
-        year, month = self.period_values()
-        self.app.report_service.export_table_pdf(Path(filename), f"Responsable Inscripto - {title}", self.tab_rows.get(title, []), f"{client['nombre_razon_social']} · CUIT/CUIL {client['cuit_cuil']} · Período {month:02d}/{year}")
-        try: os.startfile(filename, "print")
-        except OSError: messagebox.showinfo("PDF listo", f"Abrí e imprimí:\n{filename}", parent=self)
