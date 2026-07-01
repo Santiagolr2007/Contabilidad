@@ -18,7 +18,7 @@ class TwoRowNotebook(ttk.Frame):
     def __init__(self, parent, columns: int = 10) -> None:
         super().__init__(parent)
         self.columns = columns
-        self.menu = ttk.Frame(self)
+        self.menu = ttk.Frame(self, style="TabBar.TFrame", padding=(5, 4))
         self.menu.pack(fill="x", pady=(0, 8))
         self.pages: list[ttk.Frame] = []
         self.buttons: list[ttk.Button] = []
@@ -30,6 +30,7 @@ class TwoRowNotebook(ttk.Frame):
         button = ttk.Button(
             self.menu,
             text=text,
+            style="TabNav.TButton",
             command=lambda selected=index: self.select(selected),
         )
         button.grid(
@@ -50,7 +51,7 @@ class TwoRowNotebook(ttk.Frame):
             page.pack_forget()
         self.pages[index].pack(fill="both", expand=True)
         for position, button in enumerate(self.buttons):
-            button.configure(style="Primary.TButton" if position == index else "TButton")
+            button.configure(style="SelectedTabNav.TButton" if position == index else "TabNav.TButton")
 
     def tabs(self) -> tuple[ttk.Frame, ...]:
         return tuple(self.pages)

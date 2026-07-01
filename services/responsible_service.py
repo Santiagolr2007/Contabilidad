@@ -36,7 +36,14 @@ class ResponsibleService:
                    LOWER(COALESCE(d.regimen_principal,'')) LIKE '%responsable%inscript%'
                    OR LOWER(COALESCE(d.condicion_iva,'')) LIKE '%responsable%inscript%'
                    OR UPPER(COALESCE(o.codigo,''))='IVA'
-                   OR LOWER(COALESCE(o.nombre,''))='iva')
+                   OR LOWER(COALESCE(o.nombre,''))='iva'
+                   OR EXISTS (
+                       SELECT 1 FROM cliente_legajo_campos cp
+                       WHERE cp.cliente_id=c.id
+                         AND cp.seccion='responsable_inscripto'
+                         AND cp.campo='ri_inscripto'
+                         AND LOWER(cp.valor) IN ('sí','si','en trámite')
+                   ))
                ORDER BY c.nombre_razon_social COLLATE NOCASE"""
         )
         return [dict(row) for row in rows]

@@ -13,8 +13,8 @@ class MetricCard(tk.Frame):
             bg=COLORS["surface"],
             highlightbackground=COLORS["border"],
             highlightthickness=1,
-            padx=14,
-            pady=12,
+            padx=15,
+            pady=13,
         )
         if accent:
             tk.Frame(self, bg=accent, height=4).pack(fill="x", pady=(0, 8))

@@ -50,10 +50,36 @@ class ResponsibleInscriptoView(ttk.Frame):
         controls.columnconfigure(1, weight=1)
 
         self.details = TwoRowNotebook(self, columns=7)
-        self.details.pack(fill="both", expand=True)
-        if self.client_map: self.refresh()
+        if self.client_map:
+            self.details.pack(fill="both", expand=True)
+            self.refresh()
         else:
-            ttk.Label(self, text="No hay clientes activos con condición Responsable Inscripto o IVA activo.", style="Subtitle.TLabel").pack(anchor="w", pady=20)
+            self._show_empty_state()
+
+    def _show_empty_state(self) -> None:
+        empty = ttk.LabelFrame(self, text="Sin clientes para mostrar", padding=28)
+        empty.pack(fill="both", expand=True, pady=(8, 0))
+        ttk.Label(
+            empty,
+            text="Todavía no hay clientes activos configurados como Responsable Inscripto.",
+            style="Title.TLabel",
+        ).pack(anchor="center", pady=(70, 8))
+        ttk.Label(
+            empty,
+            text=(
+                "Abrí la ficha de un cliente y seleccioná un régimen Responsable Inscripto, "
+                "una condición IVA Responsable Inscripto o marcá ‘Está inscripto’ en su perfil."
+            ),
+            style="Subtitle.TLabel",
+            justify="center",
+            wraplength=720,
+        ).pack(anchor="center", pady=(0, 18))
+        ttk.Button(
+            empty,
+            text="Ir a Clientes",
+            style="Primary.TButton",
+            command=lambda: self.app.show_view("clientes"),
+        ).pack(anchor="center")
 
     def _filter_clients(self, _event=None) -> None:
         term = self.selected.get().casefold().strip()

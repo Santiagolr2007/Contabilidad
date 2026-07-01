@@ -89,6 +89,13 @@ class RegimeView(ttk.Frame):
     def _clients(self) -> list[dict]:
         if self.is_responsible:
             return self.app.dashboard_service.clients_by_category("responsables")
+        category = {
+            "ganancias": "ganancias",
+            "bienes_personales": "bienes",
+            "casas_particulares": "casas",
+        }.get(self.regime)
+        if category:
+            return self.app.dashboard_service.clients_by_category(category)
         term = self.regime.replace("_", " ").casefold()
         return [row for row in self.app.dashboard_service.clients_by_category("activos") if term in str(row.get("condicion_fiscal", "")).replace("_", " ").casefold()]
 
@@ -107,7 +114,14 @@ class RegimeView(ttk.Frame):
                (SELECT COUNT(*) FROM honorarios WHERE cliente_id=? AND saldo_pendiente>0 AND LOWER(estado) NOT IN ('cobrado','bonificado','anulado','no corresponde')) pagos_pendientes,
                (SELECT COUNT(*) FROM cliente_legajo_registros WHERE cliente_id=? AND seccion='documentacion' AND LOWER(estado) NOT IN ('recibido','aprobado','no corresponde')) documentacion_pendiente,
                (SELECT COUNT(*) FROM alertas_fiscales WHERE cliente_id=? AND estado IN ('activa','pendiente')) alertas""",
-            (client_id, f"{year:04d}-{month}", client_id, f"{year:04d}-{month}", client_id, f"{year:04d}-%", client_id, f"{year:04d}-%", client_id, client_id, client_id, client_id, client_id, client_id, client_id),
+            (
+                client_id, f"{year:04d}-{month}",
+                client_id, f"{year:04d}-{month}",
+                client_id, f"{year:04d}-%",
+                client_id, f"{year:04d}-%",
+                client_id, client_id, client_id, client_id,
+                client_id, client_id, client_id, client_id,
+            ),
         )
         return dict(row) if row else {}
 
@@ -144,6 +158,15 @@ class RegimeView(ttk.Frame):
     def _render_table(self) -> None:
         assert self.tree is not None
         for item in self.tree.get_children(): self.tree.delete(item)
+        if not self.rows:
+            self.tree.insert(
+                "", "end", iid="__empty__",
+                text=f"No hay clientes activos configurados en {self.title_text}.",
+                values=("Abrí Clientes para asignar el régimen u obligación fiscal.", *([""] * 10)),
+                tags=("empty",),
+            )
+            self.tree.tag_configure("empty", foreground="#64748B")
+            return
         for row in self.rows:
             self.tree.insert("", "end", iid=str(row["cliente_id"]), text=row["nombre_razon_social"], values=(row["cuit_cuil"], row.get("actividad", ""), row.get("estado", ""), display_date(row.get("fecha_alta_estudio")), display_date(row.get("proximo_vencimiento")), row.get("riesgo_general", ""), money(row["ventas_anio"]), money(row["compras_anio"]), money(row.get("ventas_12")), money(row.get("compras_12")), row.get("vencimientos_pendientes", 0)))
 
@@ -186,7 +209,11 @@ class RegimeView(ttk.Frame):
     def open_ledger(self) -> None:
         if self.tree is None or not self.tree.selection():
             messagebox.showinfo("Seleccionar cliente", "Seleccioná un cliente.", parent=self); return
-        self._open_ledger_id(int(self.tree.selection()[0]))
+        selected = self.tree.selection()[0]
+        if selected == "__empty__":
+            messagebox.showinfo("Sin clientes", f"No hay clientes configurados en {self.title_text}.", parent=self)
+            return
+        self._open_ledger_id(int(selected))
 
     def _export_rows(self) -> list[dict]:
         return [{

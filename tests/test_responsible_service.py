@@ -50,6 +50,11 @@ class ResponsibleServiceTests(unittest.TestCase):
         self.assertIn(self.client_id, ids)
         self.assertNotIn(self.mono_id, ids)
 
+    def test_selector_accepts_manual_responsible_profile(self) -> None:
+        self.service.save_profile(self.mono_id, {"ri_inscripto": "Sí"})
+        ids = {row["id"] for row in self.service.clients()}
+        self.assertIn(self.mono_id, ids)
+
     def test_dashboard_combines_arca_platforms_iibb_and_pending_items(self) -> None:
         self._seed_movements()
         data = self.service.dashboard(self.client_id, 2026, 6)

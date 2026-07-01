@@ -57,6 +57,12 @@ def main() -> None:
             FiscalProfile(regimen_principal="monotributista"),
             MonotributoProfile(categoria_actual="A"),
         )
+        application.show_view("responsables")
+        application.update_idletasks()
+        empty_text = " | ".join(widget_texts(application.current_view))
+        assert "Todavía no hay clientes activos configurados como Responsable Inscripto" in empty_text
+        assert "Ir a Clientes" in empty_text
+        print("OK: estado vacío visible de Responsable Inscripto", flush=True)
         application.client_service.save(
             Client("Responsable Smoke SA", "30222222223", tipo_persona="sociedad", rubro="Servicios"),
             FiscalProfile(regimen_principal="Sociedad Responsable Inscripta", condicion_iva="Responsable Inscripto"),
@@ -77,6 +83,19 @@ def main() -> None:
                 assert max(int(button.grid_info()["row"]) for button in application.current_view.details.buttons) >= 1
                 assert application.current_view.details.pages[0].horizontal
                 print("OK: 14 solapas y doble scroll de Responsable Inscripto", flush=True)
+            elif route == "bienes":
+                assert application.current_view.count.get() == "0 clientes"
+                assert application.current_view.tree.exists("__empty__")
+                assert "No hay clientes activos configurados" in application.current_view.tree.item("__empty__", "text")
+                bienes_id = application.client_service.save(
+                    Client("Bienes Personales Smoke", "20333444559"),
+                    FiscalProfile(regimen_principal="bienes_personales"),
+                    None,
+                )
+                application.current_view.refresh()
+                assert application.current_view.count.get() == "1 clientes"
+                assert application.current_view.tree.exists(str(bienes_id))
+                print("OK: estado vacío y detección de clientes de Bienes Personales", flush=True)
             elif route == "clientes":
                 client_text = " | ".join(widget_texts(application.current_view))
                 assert "Sistema Registral" not in client_text

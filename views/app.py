@@ -74,7 +74,7 @@ class AccountingStudioApp(tk.Tk):
         self.report_service = ReportService(self.voucher_service)
         self.responsible_service = ResponsibleService(database)
 
-        self.sidebar = tk.Frame(self, bg=COLORS["navy"], width=235)
+        self.sidebar = tk.Frame(self, bg=COLORS["navy"], width=242)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
         self.content = ttk.Frame(self)
@@ -98,6 +98,7 @@ class AccountingStudioApp(tk.Tk):
             fg="white",
             font=("Segoe UI", 16, "bold"),
         ).pack(anchor="w")
+        tk.Frame(self.sidebar, bg="#31536F", height=1).pack(fill="x", padx=18, pady=(0, 8))
         tk.Label(
             brand,
             text="Gestión contable y fiscal",
@@ -131,7 +132,7 @@ class AccountingStudioApp(tk.Tk):
                 relief="flat",
                 borderwidth=0,
                 padx=18,
-                pady=8,
+                pady=9,
                 bg=COLORS["navy"],
                 fg="#E4EEF6",
                 activebackground=COLORS["navy_light"],
@@ -157,6 +158,7 @@ class AccountingStudioApp(tk.Tk):
             button.configure(
                 bg=COLORS["navy_light"] if key == route else COLORS["navy"],
                 fg="white" if key == route else "#E4EEF6",
+                font=("Segoe UI", 9, "bold" if key == route else "normal"),
             )
 
         factories = {
